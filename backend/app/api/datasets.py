@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import uuid
 from pathlib import Path
 from typing import Any
@@ -11,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from app.core import db
+from app.core import db, fsops
 from app.core.config import DATASETS_DIR, IMAGE_SUFFIXES, MAX_ZIP_BYTES, UPLOADS_DIR
 from app.services import dataset_ingest
 
@@ -216,6 +215,16 @@ def delete_dataset(dataset_id: str) -> dict[str, str]:
             409, "이 데이터셋을 쓴 학습 기록이 있어 삭제할 수 없습니다."
         )
     # 경로 참조 데이터셋의 원본은 절대 지우지 않는다. 우리가 만든 폴더만 지운다.
-    shutil.rmtree(DATASETS_DIR / dataset_id, ignore_errors=True)
+    # 파일을 먼저 지우고 성공했을 때만 DB 행을 지운다 — 실패를 삼키면 목록에서만
+    # 사라지고 디스크에는 사본이 남아 손댈 방법이 없어진다.
+    try:
+        fsops.remove_tree(DATASETS_DIR / dataset_id)
+    except OSError as exc:
+        raise HTTPException(
+            409,
+            "데이터셋 폴더를 지우지 못했습니다. 파일을 열어 둔 프로그램이 있는지"
+            f" 확인하고 다시 시도하세요: {exc}",
+        ) from exc
+
     db.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
     return {"status": "deleted", "id": dataset["id"]}

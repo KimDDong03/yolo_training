@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
-from pathlib import Path
 from typing import Any
 
 from fastapi import (
@@ -19,7 +17,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 
-from app.core import db
+from app.core import db, fsops
 from app.services import event_stream, gpu, models, param_schema, predict, run_manager
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -106,7 +104,18 @@ def delete_run(run_id: str) -> dict[str, str]:
     if run_manager.export_alive(run_id):
         # 폴더를 지워도 내보내기 프로세스는 계속 돌면서 GPU 를 물고 있다.
         raise HTTPException(409, "내보내는 중입니다. 끝난 뒤에 삭제하세요.")
-    shutil.rmtree(run_manager.run_dir_for(run_id), ignore_errors=True)
+
+    # 파일을 먼저 지우고, 성공했을 때만 DB 행을 지운다. 순서를 바꾸거나 실패를 삼키면
+    # 목록에서는 사라졌는데 디스크에는 가중치가 남아 손댈 방법이 없어진다.
+    try:
+        fsops.remove_tree(run_manager.run_dir_for(run_id))
+    except OSError as exc:
+        raise HTTPException(
+            409,
+            "산출물 폴더를 지우지 못했습니다. 파일을 열어 둔 프로그램이 있는지"
+            f" 확인하고 다시 시도하세요: {exc}",
+        ) from exc
+
     db.execute("DELETE FROM runs WHERE id = ?", (run_id,))
     return {"status": "deleted", "id": run_id}
 

@@ -144,11 +144,20 @@ def build_schema() -> dict[str, Any]:
             default = default_model()
         elif key == "cache":
             default = "False" if not default else str(default)
-        elif choices is not None:
+
+        # 기본값 보정과 별개로 돌아야 한다. elif 로 묶여 있던 동안 cache 만 choices 가
+        # 원시 문자열 리스트로 남았고, _coerce 의 c["value"] 가 문자열을 인덱싱해
+        # 학습 시작이 500 으로 죽었다.
+        if choices is not None:
             choices = [{"value": c, "label": c, "available": True} for c in choices]
 
+        # ultralytics 기본값의 타입이 우리 선언과 다를 수 있다 (multi_scale 은 bool 로 쓰지만
+        # DEFAULT_CFG_DICT 에는 0.0 으로 들어 있다). 맞춰 두지 않으면 폼이 그 값을 그대로
+        # 돌려보내고 _coerce 가 자기 기본값을 거부한다.
         if type_ == "int" and isinstance(default, float):
             default = int(default)
+        elif type_ == "bool" and not isinstance(default, bool):
+            default = bool(default)
 
         fields.append(
             {

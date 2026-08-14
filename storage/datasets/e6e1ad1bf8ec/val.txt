@@ -1,4 +1,0 @@
-C:\Projects\Yolo training\storage\datasets\e6e1ad1bf8ec\data\ds_demo\images\img000.jpg
-C:\Projects\Yolo training\storage\datasets\e6e1ad1bf8ec\data\ds_demo\images\img006.jpg
-C:\Projects\Yolo training\storage\datasets\e6e1ad1bf8ec\data\ds_demo\images\img015.jpg
-C:\Projects\Yolo training\storage\datasets\e6e1ad1bf8ec\data\ds_demo\images\img012.jpg

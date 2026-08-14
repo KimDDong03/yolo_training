@@ -12,7 +12,7 @@
 
 .EXAMPLE
     .\scripts\setup.ps1 -SkipFrontend
-    프론트엔드를 다시 빌드하지 않는다. 저장소에 커밋된 frontend/dist 를 그대로 쓴다.
+    프론트엔드를 다시 빌드하지 않는다. 이전에 빌드해 둔 frontend/dist 가 있을 때만 쓴다.
 
 .EXAMPLE
     .\scripts\setup.ps1 -PythonPath "C:\Python311\python.exe"
@@ -207,11 +207,27 @@ Assert-LastExit '경로 이전'
 # --- 7. 프론트엔드 ------------------------------------------------------------
 Write-Step '프론트엔드'
 
+# frontend/dist 는 빌드 산출물이라 저장소에 커밋하지 않는다.
+# 따라서 화면을 보려면 이 단계가 반드시 한 번은 성공해야 한다.
+$DistIndex = Join-Path $Root 'frontend\dist\index.html'
+
 if ($SkipFrontend) {
-    Write-Host '  -SkipFrontend — 커밋된 frontend/dist 를 그대로 쓴다'
+    if (Test-Path $DistIndex) {
+        Write-Host '  -SkipFrontend — 기존 frontend/dist 를 그대로 쓴다'
+    } else {
+        Write-Host '  -SkipFrontend 인데 frontend/dist 가 없다. 화면이 뜨지 않는다.' -ForegroundColor Yellow
+        Write-Host '  -SkipFrontend 없이 한 번 실행해서 빌드해라.' -ForegroundColor Yellow
+    }
 } elseif (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-    Write-Host '  Node.js 가 없다 — 커밋된 frontend/dist 를 그대로 쓴다 (문제 없음).'
-    Write-Host '  프론트엔드 소스를 고칠 계획이라면 Node.js 20+ 를 설치해라: https://nodejs.org/'
+    if (Test-Path $DistIndex) {
+        Write-Host '  Node.js 가 없다 — 이미 빌드된 frontend/dist 를 그대로 쓴다.' -ForegroundColor Yellow
+    } else {
+        Write-Host ''
+        Write-Host '  Node.js 가 없어서 화면을 빌드할 수 없다.' -ForegroundColor Red
+        Write-Host '  frontend/dist 는 빌드 산출물이라 저장소에 들어 있지 않다.' -ForegroundColor Red
+        Write-Host '  Node.js 20+ 를 설치하고 다시 실행해라: https://nodejs.org/' -ForegroundColor Red
+        exit 1
+    }
 } else {
     Push-Location (Join-Path $Root 'frontend')
     try {

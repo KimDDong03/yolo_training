@@ -5,6 +5,7 @@ import type { LoadStatus } from '../useResource'
 import { DatasetRegister } from './DatasetRegister'
 import { DatasetReviewPanel } from './DatasetReviewPanel'
 import { useConfirm, usePrompt } from './ui/Dialog'
+import { Recommendations } from './Recommendations'
 import { Field, type FieldStatus } from './ui/Field'
 import { useToast } from './ui/Toast'
 
@@ -331,6 +332,20 @@ export function NewRunPanel({
 
       {/* 파라미터를 고르기 전에 봐야 하는 정보다 — 작은 객체가 대부분이면 imgsz 를 키워야 한다. */}
       {dataset && showReview && <DatasetReviewPanel dataset={dataset} />}
+
+      {dataset && schema && (
+        <Recommendations
+          dataset={dataset}
+          /* 스코프를 나눠 보내야 한다. values 에는 UI 전용 옵션(tensorboard 등)이 섞여 있고,
+             서버의 allowlist 는 그걸 params 로 받으면 422 로 거절한다 (start() 와 같은 이유). */
+          values={scopedValues().params}
+          devices={devices}
+          onApply={(patch) => {
+            setValues((s) => ({ ...s, ...patch }))
+            setAppliedPreset(null) // 프리셋 위에 덮어썼으므로 더 이상 그 프리셋이 아니다
+          }}
+        />
+      )}
 
       <div className="card">
         <div className="card-head">

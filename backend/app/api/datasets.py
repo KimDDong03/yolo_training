@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 
 from app.core import db, fsops
 from app.core.config import DATASETS_DIR, IMAGE_SUFFIXES, MAX_ZIP_BYTES, UPLOADS_DIR
-from app.services import dataset_ingest
+from app.services import dataset_ingest, param_schema, recommend
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
@@ -50,6 +50,31 @@ def get_dataset(dataset_id: str) -> dict[str, Any]:
     if row is None:
         raise HTTPException(404, "데이터셋을 찾을 수 없습니다.")
     return db.row_to_dataset(row)
+
+
+@router.post("/{dataset_id}/recommendation")
+def dataset_recommendation(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """이 데이터셋에 맞는 파라미터 제안. 부작용 없는 계산이다.
+
+    지금 폼에 들어 있는 값을 함께 받아야 "무엇을 무엇으로 바꾸라" 를 말할 수 있어서
+    GET 이 아니라 POST 다 (validate-model 과 같은 성격).
+    """
+    row = db.query_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+    if row is None:
+        raise HTTPException(404, "데이터셋을 찾을 수 없습니다.")
+
+    # 계산만 하는 엔드포인트라도 allowlist 를 거친다. 여기서 나온 patch 가 그대로 폼에
+    # 들어갔다가 학습 인자가 되기 때문이다.
+    try:
+        params = param_schema.validate(payload.get("params"), "params")
+    except param_schema.ValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    devices = payload.get("devices") or []
+    if not isinstance(devices, list) or any(not isinstance(d, int) for d in devices):
+        raise HTTPException(422, "devices 는 GPU 번호의 배열이어야 합니다.")
+
+    return recommend.recommend(db.row_to_dataset(row), params, devices)
 
 
 @router.post("/upload")

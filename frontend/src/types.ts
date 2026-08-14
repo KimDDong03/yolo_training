@@ -168,6 +168,46 @@ export interface DiagnosisChange {
   to: unknown
 }
 
+/** 이 데이터셋에는 이 값이 낫다는 제안 하나. */
+export interface RecommendationItem {
+  rule: string
+  severity: 'info' | 'warn'
+  changes: Record<string, DiagnosisChange>
+  /** 왜 이 제안이 나왔는지 (데이터에서 관측된 사실). */
+  reason: string
+  /** 적용하면 무엇이 좋아지고 무엇을 치르는지. */
+  effect: string
+}
+
+export interface Recommendation {
+  /** false 면 이 데이터셋에 박스 분포 정보가 없다는 뜻이다 (구버전 등록). */
+  available: boolean
+  reason?: string
+  items: RecommendationItem[]
+  /** 값은 건드리지 않고 알려만 주는 것들. */
+  advisories: { code: string; severity: 'info' | 'warn'; message: string }[]
+  /** 모든 제안을 합친 것. 한 번에 적용할 때 쓴다. */
+  patch: Record<string, unknown>
+}
+
+export interface Estimate {
+  ok: boolean
+  reason?: string
+  epoch_time_s: number
+  total_time_s: number
+  /** [낙관, 비관]. 점 추정만 보여주면 안 된다 — 보정 표본이 없을 때 특히. */
+  range_s: [number, number]
+  batch_effective: number
+  vram_gb: number | null
+  vram_total_gb: number | null
+  vram_level: 'ok' | 'tight' | 'over'
+  /** calibrated = 이 PC 의 실측으로 보정함. analytic = 근사식뿐. */
+  source: 'calibrated' | 'analytic'
+  samples: number
+  assumptions: string[]
+  warnings: { code: string; message: string; patch: Record<string, unknown> }[]
+}
+
 export interface Diagnosis {
   run_id: string
   status: RunStatus

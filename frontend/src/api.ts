@@ -3,12 +3,14 @@ import type {
   Dataset,
   DatasetReview,
   Diagnosis,
+  Estimate,
   ExportStatus,
   Gpu,
   ModelCheck,
   ParamSchema,
   PredictResult,
   Preset,
+  Recommendation,
   Run,
   SystemInfo,
   TrainEvent,
@@ -95,6 +97,18 @@ export const api = {
       body: JSON.stringify(body),
     }),
   diagnosis: (id: string) => req<Diagnosis>(`/api/runs/${id}/diagnosis`),
+  recommendation: (datasetId: string, params: Record<string, unknown>, devices: number[]) =>
+    req<Recommendation>(`/api/datasets/${datasetId}/recommendation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ params, devices }),
+    }),
+  estimate: (datasetId: string, params: Record<string, unknown>, devices: number[]) =>
+    req<Estimate>('/api/estimate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_id: datasetId, params, devices }),
+    }),
   stopRun: (id: string, mode: 'graceful' | 'force') =>
     req<Run>(`/api/runs/${id}/stop?mode=${mode}`, { method: 'POST' }),
   deleteRun: (id: string) => req<{ status: string }>(`/api/runs/${id}`, { method: 'DELETE' }),

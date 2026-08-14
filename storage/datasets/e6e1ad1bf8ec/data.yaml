@@ -1,0 +1,6 @@
+path: C:\Projects\Yolo training\storage\datasets\e6e1ad1bf8ec
+train: train.txt
+val: val.txt
+names:
+  0: red
+  1: blue

@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+node_modules/
+.venv/
+venv/
+
+# 런타임에 다시 생기는 것
+storage/uploads/
+**/labels.cache
+app.db-wal
+app.db-shm
+
+# scripts/fetch_weights.py 가 내려받는다
+bundle/weights/*.pt
+bundle/wheels/
+
+.vscode/
+.idea/

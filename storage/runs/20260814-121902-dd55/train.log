@@ -1,0 +1,87 @@
+Ultralytics 8.4.47  Python-3.11.9 torch-2.11.0+cu128 CUDA:0 (NVIDIA GeForce RTX 3060, 12288MiB)
+[34m[1mengine\trainer: [0magnostic_nms=False, amp=False, angle=1.0, augment=False, auto_augment=randaugment, batch=4, bgr=0.0, box=7.5, cache=False, cfg=None, classes=None, close_mosaic=10, cls=0.5, cls_pw=0.0, compile=False, conf=None, copy_paste=0.0, copy_paste_mode=flip, cos_lr=False, cutmix=0.0, data=C:\Projects\Yolo training\storage\datasets\e6e1ad1bf8ec\data.yaml, degrees=0.0, deterministic=True, device=0, dfl=1.5, dnn=False, dropout=0.0, dynamic=False, embed=None, end2end=None, epochs=5, erasing=0.4, exist_ok=True, fliplr=0.5, flipud=0.0, format=torchscript, fraction=1.0, freeze=None, half=False, hsv_h=0.015, hsv_s=0.7, hsv_v=0.4, imgsz=160, int8=False, iou=0.7, keras=False, kobj=1.0, line_width=None, lr0=0.01, lrf=0.01, mask_ratio=4, max_det=300, mixup=0.0, mode=train, model=yolo11n.yaml, momentum=0.937, mosaic=1.0, multi_scale=0.0, name=train, nbs=64, nms=False, opset=None, optimize=False, optimizer=auto, overlap_mask=True, patience=0, perspective=0.0, plots=True, pose=12.0, pretrained=True, profile=False, project=C:\Projects\Yolo training\storage\runs\20260814-121902-dd55, rect=False, resume=False, retina_masks=False, rle=1.0, save=True, save_conf=False, save_crop=False, save_dir=C:\Projects\Yolo training\storage\runs\20260814-121902-dd55\train, save_frames=False, save_json=False, save_period=-1, save_txt=False, scale=0.5, seed=0, shear=0.0, show=False, show_boxes=True, show_conf=True, show_labels=True, simplify=True, single_cls=False, source=None, split=val, stream_buffer=False, task=detect, time=None, tracker=botsort.yaml, translate=0.1, val=True, verbose=True, vid_stride=1, visualize=False, warmup_bias_lr=0.1, warmup_epochs=3.0, warmup_momentum=0.8, weight_decay=0.0005, workers=0, workspace=None
+Overriding model.yaml nc=80 with nc=2
+
+                   from  n    params  module                                       arguments                     
+  0                  -1  1       464  ultralytics.nn.modules.conv.Conv             [3, 16, 3, 2]                 
+  1                  -1  1      4672  ultralytics.nn.modules.conv.Conv             [16, 32, 3, 2]                
+  2                  -1  1      6640  ultralytics.nn.modules.block.C3k2            [32, 64, 1, False, 0.25]      
+  3                  -1  1     36992  ultralytics.nn.modules.conv.Conv             [64, 64, 3, 2]                
+  4                  -1  1     26080  ultralytics.nn.modules.block.C3k2            [64, 128, 1, False, 0.25]     
+  5                  -1  1    147712  ultralytics.nn.modules.conv.Conv             [128, 128, 3, 2]              
+  6                  -1  1     87040  ultralytics.nn.modules.block.C3k2            [128, 128, 1, True]           
+  7                  -1  1    295424  ultralytics.nn.modules.conv.Conv             [128, 256, 3, 2]              
+  8                  -1  1    346112  ultralytics.nn.modules.block.C3k2            [256, 256, 1, True]           
+  9                  -1  1    164608  ultralytics.nn.modules.block.SPPF            [256, 256, 5]                 
+ 10                  -1  1    249728  ultralytics.nn.modules.block.C2PSA           [256, 256, 1]                 
+ 11                  -1  1         0  torch.nn.modules.upsampling.Upsample         [None, 2, 'nearest']          
+ 12             [-1, 6]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 13                  -1  1    111296  ultralytics.nn.modules.block.C3k2            [384, 128, 1, False]          
+ 14                  -1  1         0  torch.nn.modules.upsampling.Upsample         [None, 2, 'nearest']          
+ 15             [-1, 4]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 16                  -1  1     32096  ultralytics.nn.modules.block.C3k2            [256, 64, 1, False]           
+ 17                  -1  1     36992  ultralytics.nn.modules.conv.Conv             [64, 64, 3, 2]                
+ 18            [-1, 13]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 19                  -1  1     86720  ultralytics.nn.modules.block.C3k2            [192, 128, 1, False]          
+ 20                  -1  1    147712  ultralytics.nn.modules.conv.Conv             [128, 128, 3, 2]              
+ 21            [-1, 10]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 22                  -1  1    378880  ultralytics.nn.modules.block.C3k2            [384, 256, 1, True]           
+ 23        [16, 19, 22]  1    431062  ultralytics.nn.modules.head.Detect           [2, 16, None, [64, 128, 256]] 
+YOLO11n summary: 182 layers, 2,590,230 parameters, 2,590,214 gradients, 6.4 GFLOPs
+
+Freezing layer 'model.23.dfl.conv.weight'
+[34m[1mtrain: [0mFast image access  (ping: 0.00.0 ms, read: 34.13.8 MB/s, size: 1.7 KB)
+[K[34m[1mtrain: [0mScanning C:\Projects\Yolo training\storage\datasets\e6e1ad1bf8ec\data\ds_demo\labels... 12 images, 0 backgrounds, 0 corrupt: 100% ━━━━━━━━━━━━ 12/12 1.1Kit/s 0.0s
+[34m[1mtrain: [0mNew cache created: C:\Projects\Yolo training\storage\datasets\e6e1ad1bf8ec\data\ds_demo\labels.cache
+[34m[1mval: [0mFast image access  (ping: 0.00.0 ms, read: 24.54.6 MB/s, size: 1.7 KB)
+[K[34m[1mval: [0mScanning C:\Projects\Yolo training\storage\datasets\e6e1ad1bf8ec\data\ds_demo\labels... 4 images, 0 backgrounds, 0 corrupt: 100% ━━━━━━━━━━━━ 4/4 2.0Kit/s 0.0s
+[34m[1mval: [0mNew cache created: C:\Projects\Yolo training\storage\datasets\e6e1ad1bf8ec\data\ds_demo\labels.cache
+[34m[1moptimizer:[0m 'optimizer=auto' found, ignoring 'lr0=0.01' and 'momentum=0.937' and determining best 'optimizer', 'lr0' and 'momentum' automatically... 
+[34m[1moptimizer:[0m AdamW(lr=0.001667, momentum=0.9) with parameter groups 81 weight(decay=0.0), 88 weight(decay=0.0005), 87 bias(decay=0.0)
+Plotting labels to C:\Projects\Yolo training\storage\runs\20260814-121902-dd55\train\labels.jpg... 
+Image sizes 160 train, 160 val
+Using 0 dataloader workers
+Logging results to [1mC:\Projects\Yolo training\storage\runs\20260814-121902-dd55\train[0m
+Starting training for 5 epochs...
+
+      Epoch    GPU_mem   box_loss   cls_loss   dfl_loss  Instances       Size
+[K        1/5     0.162G      5.482      4.188      4.194          9        160: 0% ──────────── 0/3  0.8sC:\Projects\Yolo training\backend\hooks\yoloweb_events.py:34: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\pytorch\torch\csrc\autograd\generated\python_variable_methods.cpp:837.)
+  return float(value)
+[K        1/5     0.178G      5.557       4.16      4.208          7        160: 33% ━━━━──────── 1/3 2.8it/s 0.9s<0.7s[K        1/5     0.178G      5.862      4.158      4.249         10        160: 67% ━━━━━━━━──── 2/3 4.9it/s 1.0s<0.2s[K        1/5     0.178G      5.862      4.158      4.249         10        160: 100% ━━━━━━━━━━━━ 3/3 3.0it/s 1.0s
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 1/1 10.6it/s 0.1s
+                   all          4          4          0          0          0          0
+
+      Epoch    GPU_mem   box_loss   cls_loss   dfl_loss  Instances       Size
+[K        2/5     0.178G      5.957      4.076      4.123          6        160: 33% ━━━━──────── 1/3 1.8it/s 0.2s<1.1s[K        2/5     0.188G      5.735      4.101      4.147          9        160: 67% ━━━━━━━━──── 2/3 3.9it/s 0.3s<0.3s[K        2/5     0.188G      5.735      4.101      4.147          9        160: 100% ━━━━━━━━━━━━ 3/3 10.8it/s 0.3s
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 1/1 20.7it/s 0.0s
+                   all          4          4          0          0          0          0
+
+      Epoch    GPU_mem   box_loss   cls_loss   dfl_loss  Instances       Size
+[K        3/5     0.188G      6.166      4.119       4.26          6        160: 33% ━━━━──────── 1/3 1.9it/s 0.2s<1.0s[K        3/5     0.188G      6.377      4.236      4.304         11        160: 100% ━━━━━━━━━━━━ 3/3 14.1it/s 0.2s
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 1/1 22.2it/s 0.0s
+                   all          4          4          0          0          0          0
+
+      Epoch    GPU_mem   box_loss   cls_loss   dfl_loss  Instances       Size
+[K        4/5     0.188G      5.944      4.237      4.262         12        160: 33% ━━━━──────── 1/3 1.9it/s 0.2s<1.1s[K        4/5     0.188G      5.652       4.19      4.267          4        160: 100% ━━━━━━━━━━━━ 3/3 12.7it/s 0.2s
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 1/1 25.3it/s 0.0s
+                   all          4          4          0          0          0          0
+
+      Epoch    GPU_mem   box_loss   cls_loss   dfl_loss  Instances       Size
+[K        5/5     0.188G      5.537      4.248      4.216          5        160: 33% ━━━━──────── 1/3 2.4it/s 0.1s<0.8s[K        5/5     0.188G      5.876      4.244      4.266         11        160: 100% ━━━━━━━━━━━━ 3/3 17.4it/s 0.2s
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 1/1 26.5it/s 0.0s
+                   all          4          4          0          0          0          0
+
+5 epochs completed in 0.002 hours.
+Optimizer stripped from C:\Projects\Yolo training\storage\runs\20260814-121902-dd55\train\weights\last.pt, 5.4MB
+Optimizer stripped from C:\Projects\Yolo training\storage\runs\20260814-121902-dd55\train\weights\best.pt, 5.4MB
+
+Validating C:\Projects\Yolo training\storage\runs\20260814-121902-dd55\train\weights\best.pt...
+Ultralytics 8.4.47  Python-3.11.9 torch-2.11.0+cu128 CUDA:0 (NVIDIA GeForce RTX 3060, 12288MiB)
+YOLO11n summary (fused): 101 layers, 2,582,542 parameters, 0 gradients, 6.3 GFLOPs
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 1/1 38.2it/s 0.0s
+                   all          4          4          0          0          0          0
+                   red          3          3          0          0          0          0
+                  blue          1          1          0          0          0          0
+Speed: 0.3ms preprocess, 2.6ms inference, 0.0ms loss, 0.8ms postprocess per image
+Results saved to [1mC:\Projects\Yolo training\storage\runs\20260814-121902-dd55\train[0m

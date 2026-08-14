@@ -1,0 +1,10 @@
+# torch / torchvision 은 여기 없다.
+# CUDA 빌드라 인덱스가 달라서 scripts/setup.ps1 이 따로 설치한다.
+#   GPU:  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#   CPU:  pip install torch torchvision
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
+python-multipart==0.0.32
+PyYAML==6.0.3
+ultralytics==8.4.47

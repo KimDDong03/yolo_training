@@ -44,6 +44,9 @@ class JobSpec:
     validate: Callable[[dict[str, Any]], dict[str, Any]]
     needs_gpu: Callable[[dict[str, Any]], bool]
     build_argv: Callable[[Path, Path, dict[str, Any], list[int]], list[str]]
+    # GPU 를 못 잡았을 때 CPU 로 내려서라도 돌릴 것인가.
+    # TensorRT 변환처럼 GPU 가 없으면 아예 불가능한 작업은 False 로 두고 거절한다.
+    gpu_optional: bool = False
 
 
 SPECS: dict[str, JobSpec] = {}
@@ -110,6 +113,53 @@ def _argv_export(
     if args["dynamic"]:
         argv.append("--dynamic")
     return argv
+
+
+def _validate_analyze(args: dict[str, Any]) -> dict[str, Any]:
+    weights = str(args.get("weights", "train/weights/best.pt"))
+    if not _is_contained(weights):
+        raise JobError("실행 폴더 안의 상대 경로만 지정할 수 있습니다.")
+    imgsz = int(args.get("imgsz", 640))
+    if not 32 <= imgsz <= 4096:
+        raise JobError("이미지 크기는 32~4096 이어야 합니다.")
+    return {
+        "weights": weights,
+        "imgsz": imgsz - imgsz % 32,
+        "batch": max(1, min(int(args.get("batch", 8)), 64)),
+        # 요청이 GPU 를 직접 고르지 못하게 한다. 학습이 쓰는 GPU 에 얹으면 학습이 죽는다 —
+        # 비어 있을 때만 서버가 배정한다.
+        "use_gpu": bool(args.get("use_gpu", False)),
+    }
+
+
+def _argv_analyze(
+    owner: Path, directory: Path, args: dict[str, Any], devices: list[int]
+) -> list[str]:
+    return [
+        "--run-dir", str(owner),
+        "--out-dir", str(directory),
+        "--events", str(directory / "events.jsonl"),
+        "--weights", args["weights"],
+        "--imgsz", str(args["imgsz"]),
+        "--batch", str(args["batch"]),
+        "--device", ",".join(str(d) for d in devices) if devices else "cpu",
+    ]
+
+
+register(
+    JobSpec(
+        kind="analyze",
+        owner_type="run",
+        label="오류 분석",
+        script="analysis_worker.py",
+        validate=_validate_analyze,
+        # GPU 는 사용자가 켜고 비어 있을 때만 쓴다. 못 잡으면 CPU 로 도는 게 맞다 —
+        # 분석은 배치 작업이라 조금 느려도 되지만, 학습을 죽이면 안 된다.
+        needs_gpu=lambda args: args["use_gpu"],
+        build_argv=_argv_analyze,
+        gpu_optional=True,
+    )
+)
 
 
 register(

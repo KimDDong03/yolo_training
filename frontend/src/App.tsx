@@ -171,7 +171,14 @@ export default function App() {
             <SplitPane
               storageKey="yolo.split.run"
               label="예측 화면과 지표 화면의 너비"
-              left={<PreviewPanel runId={runId} events={stream.events} dataset={detail?.dataset} />}
+              left={
+                <PreviewPanel
+                  runId={runId}
+                  run={current}
+                  events={stream.events}
+                  dataset={detail?.dataset}
+                />
+              }
               right={
                 <div className="pane stack">
                   <MetricsChart events={stream.events} />

@@ -113,6 +113,19 @@ def run_diagnosis(run_id: str) -> dict[str, Any]:
         raise HTTPException(404, str(exc)) from exc
 
 
+@router.get("/{run_id}/analysis/report")
+def analysis_report(run_id: str) -> dict[str, Any]:
+    """진단 리포트 전문. 분석 잡의 산출물이라 잡이 끝나야 생긴다."""
+    _run_or_404(run_id)
+    path = jobs.job_dir("analyze", "run", run_id) / "report.json"
+    if not path.is_file():
+        raise HTTPException(404, "아직 진단 결과가 없습니다.")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(500, "진단 결과를 읽지 못했습니다.") from exc
+
+
 @router.post("/{run_id}/stop")
 def stop_run(run_id: str, mode: str = "graceful") -> dict[str, Any]:
     _run_or_404(run_id)

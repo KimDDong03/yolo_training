@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
-import type { Artifacts, Dataset, ExportStatus, PredictResult, SystemInfo, TrainEvent } from '../types'
+import type {
+  Artifacts,
+  Dataset,
+  ExportStatus,
+  PredictResult,
+  Run,
+  SystemInfo,
+  TrainEvent,
+} from '../types'
 import { DatasetReviewPanel } from './DatasetReviewPanel'
+import { DiagnosePanel } from './DiagnosePanel'
 import { Field } from './ui/Field'
 import { EmptyState, SkeletonRows } from './ui/EmptyState'
 import { TabPanel, Tabs } from './ui/Tabs'
@@ -9,6 +18,7 @@ import { TabPanel, Tabs } from './ui/Tabs'
 const TABS = [
   { key: 'pred', label: '예측' },
   { key: 'plots', label: '플롯' },
+  { key: 'diagnose', label: '진단' },
   { key: 'infer', label: '추론' },
   { key: 'dataset', label: '데이터셋' },
 ] as const
@@ -17,11 +27,13 @@ const ID_PREFIX = 'preview'
 
 interface Props {
   runId: string
+  /** 진단 탭이 상태와 데이터셋 참조를 쓴다. 목록이 아직 안 왔으면 null 이다. */
+  run: Run | null
   events: TrainEvent[]
   dataset: Dataset | null | undefined
 }
 
-export function PreviewPanel({ runId, events, dataset }: Props) {
+export function PreviewPanel({ runId, run, events, dataset }: Props) {
   const [tab, setTab] = useState<string>('pred')
   const [artifacts, setArtifacts] = useState<Artifacts | null>(null)
   const finished = events.some((e) => e.t === 'end')
@@ -37,6 +49,8 @@ export function PreviewPanel({ runId, events, dataset }: Props) {
       <TabPanel idPrefix={ID_PREFIX} tabKey={tab} className="pane">
         {tab === 'pred' && <EpochPreview runId={runId} events={events} />}
         {tab === 'plots' && <Plots runId={runId} artifacts={artifacts} finished={finished} />}
+        {tab === 'diagnose' &&
+          (run ? <DiagnosePanel run={run} /> : <EmptyState title="실행 정보를 불러오는 중입니다." />)}
         {tab === 'infer' && <InferenceTest runId={runId} />}
         {tab === 'dataset' && <DatasetReviewPanel dataset={dataset} />}
       </TabPanel>

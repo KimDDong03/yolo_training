@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Dataset, DatasetReview } from '../types'
+import { BoxOverlay, type OverlayBox } from './BoxOverlay'
 import { Modal } from './ui/Dialog'
 import { EmptyState } from './ui/EmptyState'
 
@@ -189,43 +190,19 @@ function SampleImage({
   onZoom?: (url: string) => void
 }) {
   const url = api.datasetImageUrl(datasetId, path)
-
-  // 박스는 span 이다 — button 안에 div 를 넣으면 콘텐츠 모델을 어긴다.
-  const overlay = boxes.map((b, i) => (
-    <span
-      key={i}
-      style={{
-        display: 'block',
-        position: 'absolute',
-        left: `${(b.cx - b.w / 2) * 100}%`,
-        top: `${(b.cy - b.h / 2) * 100}%`,
-        width: `${b.w * 100}%`,
-        height: `${b.h * 100}%`,
-        border: '1.5px solid var(--ok)',
-        borderRadius: 2,
-      }}
-      title={b.name}
-    />
-  ))
-
-  if (!onZoom) {
-    return (
-      <div style={{ position: 'relative' }}>
-        <img className="preview-img" src={url} alt={path} />
-        {overlay}
-      </div>
-    )
-  }
+  // 라벨은 cx/cy/w/h 로 오고 오버레이는 xyxy 를 받는다.
+  const overlay: OverlayBox[] = boxes.map((b) => ({
+    box: [b.cx - b.w / 2, b.cy - b.h / 2, b.cx + b.w / 2, b.cy + b.h / 2],
+    label: b.name,
+    color: 'var(--ok)',
+  }))
 
   return (
-    <button
-      className="img-button"
-      style={{ position: 'relative' }}
-      aria-label={`${path.split(/[\\/]/).pop()} 확대`}
-      onClick={() => onZoom(url)}
-    >
-      <img className="preview-img" src={url} alt={path} />
-      {overlay}
-    </button>
+    <BoxOverlay
+      src={url}
+      alt={path.split(/[\\/]/).pop() ?? path}
+      boxes={overlay}
+      onZoom={onZoom}
+    />
   )
 }

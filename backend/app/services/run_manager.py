@@ -416,11 +416,13 @@ def start_job(
                 else [int(g["index"]) for g in gpu.list_gpus()]  # type: ignore[arg-type]
             )
             free = [d for d in wanted if d not in busy]
-            if not free:
+            if not free and not spec.gpu_optional:
                 raise RunError(
-                    f"이 작업은 GPU 가 필요한데 지금 다른 작업이 쓰고 있습니다. "
-                    f"끝난 뒤 다시 시도하세요."
+                    "이 작업은 GPU 가 필요한데 지금 다른 작업이 쓰고 있습니다. "
+                    "끝난 뒤 다시 시도하세요."
                 )
+            # GPU 를 못 잡아도 되는 작업은 CPU 로 내려서 돌린다. 거절하는 것보다 낫고,
+            # 무엇보다 학습이 쓰는 GPU 를 뺏지 않는다.
             devices = free[:1]
         try:
             return jobs.spawn(kind, owner_type, owner_id, clean, devices)

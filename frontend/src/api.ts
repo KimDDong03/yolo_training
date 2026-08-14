@@ -1,4 +1,5 @@
 import type {
+  AnalysisReport,
   Artifacts,
   Dataset,
   DatasetReview,
@@ -6,6 +7,7 @@ import type {
   Estimate,
   ExportStatus,
   Gpu,
+  JobStatus,
   ModelCheck,
   ParamSchema,
   PredictResult,
@@ -97,6 +99,14 @@ export const api = {
       body: JSON.stringify(body),
     }),
   diagnosis: (id: string) => req<Diagnosis>(`/api/runs/${id}/diagnosis`),
+  startAnalysis: (id: string, body: { imgsz: number; batch: number; use_gpu: boolean }) =>
+    req<JobStatus>(`/api/jobs/run/${id}/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  analysisStatus: (id: string) => req<JobStatus>(`/api/jobs/run/${id}/analyze`),
+  analysisReport: (id: string) => req<AnalysisReport>(`/api/runs/${id}/analysis/report`),
   recommendation: (datasetId: string, params: Record<string, unknown>, devices: number[]) =>
     req<Recommendation>(`/api/datasets/${datasetId}/recommendation`, {
       method: 'POST',

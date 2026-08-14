@@ -190,6 +190,83 @@ export interface Recommendation {
   patch: Record<string, unknown>
 }
 
+/** 사이드잡(내보내기·분석) 공통 상태. */
+export interface JobStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'stopped'
+  kind?: string
+  args?: Record<string, unknown>
+  devices?: number[]
+  events: { t: string; stage?: string; message?: string; status?: string; error?: string }[]
+  result: Record<string, unknown> | null
+  error?: string | null
+}
+
+export interface AnalysisBox {
+  cls: number
+  name: string
+  /** [x1, y1, x2, y2], 각각 0~1. */
+  box: [number, number, number, number]
+  conf?: number | null
+  /** 정답: hit=찾음 miss=놓침 / 예측: hit=맞음 false=오검출 */
+  state: 'hit' | 'miss' | 'false'
+}
+
+export interface AnalysisReport {
+  schema_version: number
+  run_id: string
+  weights: string
+  device: string
+  elapsed_s: number
+  classes: string[]
+  overall: {
+    images: number
+    instances: number
+    precision: number | null
+    recall: number | null
+    map50: number | null
+    map50_95: number | null
+  }
+  per_class: {
+    cls: number
+    name: string
+    images: number
+    instances: number
+    precision: number | null
+    recall: number | null
+    f1: number | null
+    ap50: number | null
+    ap50_95: number | null
+    /** false 면 검증 셋에 이 클래스의 정답이 없어 성능을 알 수 없다는 뜻이다. */
+    evaluated: boolean
+  }[]
+  worst_classes: { name: string | null; ap50_95: number | null; message: string }[]
+  conf_recommendation: {
+    conf: number | null
+    f1: number | null
+    precision: number | null
+    recall: number | null
+    /** false 면 모델이 덜 학습돼 임계값 0 이 최적으로 나온 것이다. 쓰면 안 된다. */
+    reliable: boolean
+    message: string | null
+    per_class: { cls: number; name: string; conf: number | null; f1: number | null }[]
+    curve: { conf: number | null; f1: number | null }[]
+  }
+  gallery: {
+    image: string
+    name: string
+    score: number
+    tp: number
+    fp: number
+    fn: number
+    gt: AnalysisBox[]
+    pred: AnalysisBox[]
+  }[]
+  gallery_total: number
+  gallery_cap: number
+  /** 갤러리를 어떤 신뢰도 기준으로 그렸는지. */
+  gallery_conf: number
+}
+
 export interface Estimate {
   ok: boolean
   reason?: string

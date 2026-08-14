@@ -20,7 +20,7 @@ def isolate_storage() -> Path:
     root = Path(tempfile.mkdtemp(prefix="yoloweb_test_"))
 
     from app.core import config, db
-    from app.services import run_manager
+    from app.services import jobs, run_manager
 
     config.DB_PATH = root / "app.db"
     config.RUNS_DIR = root / "runs"
@@ -30,6 +30,25 @@ def isolate_storage() -> Path:
     db._conn = None  # 이전 테스트가 열어 둔 연결을 버린다
     run_manager.RUNS_DIR = config.RUNS_DIR
 
+    # 각 모듈은 import 시점에 config 의 값을 자기 이름으로 묶어 둔다.
+    # config 만 바꾸면 그 바인딩은 실제 storage/ 를 계속 가리킨다.
+    jobs.RUNS_DIR = config.RUNS_DIR
+    jobs.DATASETS_DIR = config.DATASETS_DIR
+    jobs.OWNER_ROOTS = {"run": config.RUNS_DIR, "dataset": config.DATASETS_DIR}
+
     config.RUNS_DIR.mkdir(parents=True, exist_ok=True)
     config.DATASETS_DIR.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def force_worker_alive(test, alive: bool = True) -> None:
+    """procs.is_our_worker 를 잠시 바꾼다. 테스트가 끝나면 원래대로 돌린다.
+
+    직접 되돌리려 하면 틀리기 쉽다 — jobs.procs 는 app.core.procs 와 같은 모듈 객체라,
+    패치한 뒤에 그 모듈에서 다시 읽어 오면 방금 넣은 가짜를 자기 자신에 덮어쓴다.
+    """
+    from app.core import procs
+
+    original = procs.is_our_worker
+    procs.is_our_worker = lambda pid, started_at: alive
+    test.addCleanup(lambda: setattr(procs, "is_our_worker", original))

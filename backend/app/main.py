@@ -12,10 +12,11 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import datasets, presets, runs, system
+from app.api import datasets, jobs, presets, runs, system
 from app.core import db
 from app.core.config import FRONTEND_DIST, ensure_dirs
 from app.services import event_stream, run_manager
+from app.services import jobs as job_service
 
 
 @asynccontextmanager
@@ -23,6 +24,9 @@ async def lifespan(app: FastAPI):
     ensure_dirs()
     db.connect()
     run_manager.recover()
+    # 살아 있는 사이드잡을 다시 붙잡는다. 이걸 빼면 잡이 물고 있는 GPU 가 비어 보여
+    # 스케줄러가 그 위에 학습을 띄운다 → 둘 다 OOM.
+    job_service.recover()
     task = asyncio.create_task(run_manager.scheduler_loop())
     try:
         yield
@@ -36,6 +40,7 @@ app.include_router(system.router)
 app.include_router(presets.router)
 app.include_router(datasets.router)
 app.include_router(runs.router)
+app.include_router(jobs.router)
 
 
 @app.get("/api/health")

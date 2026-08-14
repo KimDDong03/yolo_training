@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 
 from app.core import db, fsops
 from app.core.config import DATASETS_DIR, IMAGE_SUFFIXES, MAX_ZIP_BYTES, UPLOADS_DIR
-from app.services import dataset_ingest, param_schema, recommend
+from app.services import dataset_ingest, param_schema, recommend, run_manager
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
@@ -242,8 +242,13 @@ def delete_dataset(dataset_id: str) -> dict[str, str]:
     # 경로 참조 데이터셋의 원본은 절대 지우지 않는다. 우리가 만든 폴더만 지운다.
     # 파일을 먼저 지우고 성공했을 때만 DB 행을 지운다 — 실패를 삼키면 목록에서만
     # 사라지고 디스크에는 사본이 남아 손댈 방법이 없어진다.
+    # 데이터셋에 붙는 잡(임베딩 등)이 도는 중이면 Windows 파일 잠금으로 삭제가 실패하는데,
+    # 그때 나오는 메시지로는 사용자가 원인을 알 수 없다. 잡 검사를 먼저 한다.
     try:
-        fsops.remove_tree(DATASETS_DIR / dataset_id)
+        with run_manager.exclusive_delete("dataset", dataset_id):
+            fsops.remove_tree(DATASETS_DIR / dataset_id)
+    except run_manager.RunError as exc:
+        raise HTTPException(409, str(exc)) from exc
     except OSError as exc:
         raise HTTPException(
             409,

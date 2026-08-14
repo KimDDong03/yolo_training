@@ -49,6 +49,28 @@ CREATE TABLE IF NOT EXISTS presets (
     options     TEXT NOT NULL,          -- JSON
     created_at  REAL NOT NULL
 );
+
+-- 학습이 아닌 백그라운드 작업(내보내기 · 분석 등). 학습과 같은 GPU 슬롯을 두고 경쟁한다.
+CREATE TABLE IF NOT EXISTS jobs (
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,         -- export | analyze | ...
+    owner_type   TEXT NOT NULL,         -- run | dataset
+    owner_id     TEXT NOT NULL,
+    status       TEXT NOT NULL,         -- running|completed|stopped|failed
+    args         TEXT NOT NULL,         -- JSON (allowlist 를 통과한 잡 인자)
+    devices      TEXT NOT NULL,         -- JSON 배열 (빈 배열이면 CPU)
+    pid          INTEGER,
+    error        TEXT,
+    created_at   REAL NOT NULL,
+    started_at   REAL,
+    finished_at  REAL
+);
+
+-- 소유자당 같은 종류의 잡은 하나만. 두 프로세스가 같은 폴더에 쓰면 산출물이 뒤섞인다.
+-- 인메모리 검사만으로는 검사와 기동 사이가 벌어지므로 DB 가 강제하게 둔다.
+-- 상태값은 반드시 따옴표로 감쌀 것 — 없으면 SQLite 가 컬럼명으로 읽어 기동 자체가 실패한다.
+CREATE UNIQUE INDEX IF NOT EXISTS jobs_live
+    ON jobs(kind, owner_type, owner_id) WHERE status = 'running';
 """
 
 # 나중에 추가된 컬럼. 이미 만들어진 app.db 를 그대로 열어야 하므로 ALTER 로 채운다.
@@ -129,6 +151,23 @@ def row_to_run(row: sqlite3.Row) -> dict[str, Any]:
         "error": row["error"],
         # options 와 같은 이유로 keys() 를 확인한다 — 이 컬럼이 생기기 전 run 도 읽어야 한다.
         "retry_of": row["retry_of"] if "retry_of" in row.keys() else None,
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "finished_at": row["finished_at"],
+    }
+
+
+def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "kind": row["kind"],
+        "owner_type": row["owner_type"],
+        "owner_id": row["owner_id"],
+        "status": row["status"],
+        "args": json.loads(row["args"]),
+        "devices": json.loads(row["devices"]),
+        "pid": row["pid"],
+        "error": row["error"],
         "created_at": row["created_at"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],

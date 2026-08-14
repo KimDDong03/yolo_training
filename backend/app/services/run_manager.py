@@ -6,9 +6,11 @@ GPU 1장이면 자연스럽게 순차 실행이 되고, 장수가 늘면 같은 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -17,9 +19,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from app.core import db
+from app.core import db, procs
 from app.core.config import BACKEND_DIR, HOOKS_DIR, RUNS_DIR, WEIGHTS_DIR, offline_env
-from app.services import models, param_schema
+from app.services import gpu, jobs, models, param_schema
 
 POLL_INTERVAL = 1.0
 
@@ -33,81 +35,15 @@ _processes: dict[str, subprocess.Popen] = {}
 # run_id -> pid (백엔드 재시작 후 살아 있는 걸 발견해 다시 붙잡은 것)
 _adopted: dict[str, int] = {}
 # 큐 선점은 API 스레드와 스케줄러 루프가 동시에 시도할 수 있다.
+# 사이드잡 기동(start_job)과 run/dataset 삭제도 같은 락을 쓴다 — 셋이 GPU 슬롯과
+# 소유자 폴더를 놓고 겹치기 때문이다.
 _schedule_lock = threading.RLock()
-# run_id -> {"process": Popen, "devices": [...], "format": str}
-_exports: dict[str, dict[str, Any]] = {}
 
 
-_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-_STILL_ACTIVE = 259
-# PID 재사용 방어: 프로세스 생성 시각이 run 시작 시각과 이만큼 이상 벌어지면 다른 프로세스로 본다.
-_PID_IDENTITY_WINDOW_S = 300
-
-
-def _win_process_info(pid: int) -> tuple[bool, float | None]:
-    """(살아있는가, 생성시각 unix초). Windows 전용."""
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    if not handle:
-        return False, None
-    try:
-        code = ctypes.c_ulong()
-        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-            return False, None
-        if code.value != _STILL_ACTIVE:
-            return False, None
-        created, exited, kernel_t, user_t = (wintypes.FILETIME() for _ in range(4))
-        if not kernel32.GetProcessTimes(
-            handle,
-            ctypes.byref(created),
-            ctypes.byref(exited),
-            ctypes.byref(kernel_t),
-            ctypes.byref(user_t),
-        ):
-            return True, None
-        ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
-        # FILETIME: 1601-01-01 기준 100ns 단위
-        return True, ticks / 1e7 - 11644473600.0
-    finally:
-        kernel32.CloseHandle(handle)
-
-
-def _pid_alive(pid: int) -> bool:
-    """PID 생존 확인.
-
-    Windows 에서 os.kill(pid, 0) 은 실제로 프로세스를 죽이므로 절대 쓰면 안 된다.
-    """
-    if pid <= 0:
-        return False
-    if os.name != "nt":
-        try:
-            os.kill(pid, 0)
-            return True
-        except (OSError, ProcessLookupError):
-            return False
-    return _win_process_info(pid)[0]
-
-
-def _pid_is_our_worker(pid: int, started_at: float | None) -> bool:
-    """이 PID 가 정말 우리가 띄운 그 워커인지 확인한다.
-
-    PID 는 재사용된다. 백엔드가 내려간 사이 워커가 죽고 같은 PID 가 다른 프로세스에
-    할당되면, 그걸 학습 프로세스로 착각해 강제 종료 시 무관한 프로세스 트리를 죽이게 된다.
-    생성 시각이 run 시작 시각 근처인지까지 확인해 그 경우를 막는다.
-    """
-    if not pid or pid <= 0:
-        return False
-    if os.name != "nt":
-        return _pid_alive(int(pid))
-    alive, created = _win_process_info(int(pid))
-    if not alive:
-        return False
-    if started_at is None or created is None:
-        return False  # 확인할 수 없으면 우리 것으로 간주하지 않는다
-    return abs(created - float(started_at)) <= _PID_IDENTITY_WINDOW_S
+# PID 생존·신원 확인은 app.core.procs 로 옮겼다 — 학습 워커와 사이드잡이 같은 문제를 쓴다.
+# 기존 호출부를 그대로 두려고 이름만 붙여 둔다.
+_pid_alive = procs.pid_alive
+_pid_is_our_worker = procs.is_our_worker
 
 
 class RunError(Exception):
@@ -118,57 +54,20 @@ def run_dir_for(run_id: str) -> Path:
     return RUNS_DIR / run_id
 
 
-def busy_devices() -> set[int]:
-    """지금 GPU 를 붙잡고 있는 것 전부.
-
-    내보내기(TensorRT)도 포함해야 한다 — 프로세스를 분리해도 VRAM 은 분리되지 않으므로,
-    학습과 동시에 돌면 둘 다 OOM 난다.
-    """
+def training_devices() -> set[int]:
     used: set[int] = set()
     for row in db.query("SELECT devices FROM runs WHERE status = 'running'"):
         used.update(json.loads(row["devices"]))
-    for run_id in _export_run_ids():
-        if export_alive(run_id):
-            used.update(_export_record(run_id).get("devices", []))
     return used
 
 
-# --- 내보내기 잡 추적 -------------------------------------------------------
-# 메모리에만 두면 백엔드를 재시작했을 때 살아 있는 내보내기 프로세스를 놓친다.
-# 그러면 GPU 가 실제로는 물려 있는데 비어 있다고 판단해 학습을 띄운다 → 둘 다 OOM.
+def busy_devices() -> set[int]:
+    """지금 GPU 를 붙잡고 있는 것 전부.
 
-
-def _export_record_path(run_id: str) -> Path:
-    return run_dir_for(run_id) / "export.job.json"
-
-
-def _export_record(run_id: str) -> dict[str, Any]:
-    path = _export_record_path(run_id)
-    if not path.is_file():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _export_run_ids() -> list[str]:
-    ids = set(_exports)
-    if RUNS_DIR.is_dir():
-        for path in RUNS_DIR.glob("*/export.job.json"):
-            ids.add(path.parent.name)
-    return sorted(ids)
-
-
-def export_alive(run_id: str) -> bool:
-    """이 run 의 내보내기 프로세스가 아직 살아 있는가."""
-    job = _exports.get(run_id)
-    if job is not None:
-        return job["process"].poll() is None
-    record = _export_record(run_id)
-    pid = record.get("pid")
-    # PID 는 재사용되므로 생성 시각까지 확인한다 (학습 프로세스와 같은 방어).
-    return bool(pid) and _pid_is_our_worker(int(pid), record.get("started_at"))
+    사이드잡(내보내기·분석)도 포함해야 한다 — 프로세스를 분리해도 VRAM 은 분리되지
+    않으므로, 학습과 동시에 돌면 둘 다 OOM 난다.
+    """
+    return training_devices() | jobs.reserved_devices()
 
 
 def create_run(
@@ -365,10 +264,8 @@ def reap() -> None:
     for run_id, pid in list(_adopted.items()):
         if not _pid_alive(pid):
             _settle(run_id, None)
-    # 끝난 내보내기의 GPU 예약을 푼다. 아무도 상태를 조회하지 않아도 슬롯이 풀려야 한다.
-    for run_id in _export_run_ids():
-        if not export_alive(run_id):
-            export_status(run_id)
+    # 끝난 사이드잡의 GPU 예약을 푼다. 아무도 상태를 조회하지 않아도 슬롯이 풀려야 한다.
+    jobs.sweep()
 
 
 def recover() -> None:
@@ -462,171 +359,75 @@ def stop_run(run_id: str, mode: str = "graceful") -> None:
 
     process = _processes.get(run_id)
     if process is not None:
-        if os.name == "nt":
-            # 자식(DDP rank·데이터로더 워커)까지 함께 정리한다.
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
-                           capture_output=True, check=False)
-        else:
-            process.kill()
+        # 자식(DDP rank·데이터로더 워커)까지 함께 정리한다.
+        procs.kill_tree(process.pid)
         return
 
     # 재시작 후 다시 붙잡은 run 은 PID 밖에 없다. 신원이 확인될 때만 죽인다.
     # PID 는 재사용되므로 이 검증 없이 kill 하면 무관한 프로세스를 죽일 수 있다.
     pid = row["pid"]
-    if not pid or not _pid_is_our_worker(int(pid), row["started_at"]):
+    if not _pid_is_our_worker(pid, row["started_at"]):
         raise RunError(
             "학습 프로세스를 확인할 수 없어 강제 종료하지 않았습니다. 안전 정지를 쓰거나 상태를 확인하세요."
         )
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, check=False)
-    else:
-        os.kill(int(pid), 9)
+    procs.kill_tree(int(pid))
 
 
-# ------------------------------------------------------------------- 내보내기
+# --------------------------------------------------------------------- 사이드잡
 
-# GPU 가 필요한 포맷. 나머지는 CPU 로 변환하므로 학습과 경합하지 않는다.
-GPU_FORMATS = {"engine"}
+@contextlib.contextmanager
+def exclusive_delete(owner_type: str, owner_id: str):
+    """소유자를 지우는 동안 사이드잡이 기동되지 못하게 막는다.
 
-
-def start_export(
-    run_id: str,
-    fmt: str,
-    weights: str,
-    imgsz: int = 640,
-    half: bool = False,
-    dynamic: bool = False,
-) -> dict[str, Any]:
-    run_dir = run_dir_for(run_id)
-    if not run_dir.is_dir():
-        raise RunError("실행을 찾을 수 없습니다.")
-
-    target = (run_dir / weights).resolve()
-    if run_dir.resolve() not in target.parents or not target.is_file():
-        raise RunError(f"가중치를 찾을 수 없습니다: {weights}")
-
+    "잡이 도는지 확인하고 → 지운다" 를 따로 하면 그 사이에 잡이 시작될 수 있다. 그러면
+    실행 중인 워커의 폴더를 지우게 된다. start_job 과 같은 락을 잡아야 실제로 배타가 된다.
+    삭제는 드물고 스케줄러는 어차피 1초 주기라, 파일 삭제 동안 락을 쥐는 비용은 감수한다.
+    """
     with _schedule_lock:
-        if export_alive(run_id):
-            # 같은 run 에 두 프로세스가 붙으면 export.jsonl 과 산출물이 뒤섞인다.
-            current = _exports.get(run_id, {}).get("format") or _export_record(run_id).get("format", "")
-            raise RunError(f"이미 내보내는 중입니다 ({current}).")
+        live = jobs.live_for(owner_type, owner_id)
+        if live:
+            labels = ", ".join(sorted({jobs.spec_for(j["kind"]).label for j in live}))
+            raise RunError(f"{labels} 작업이 진행 중입니다. 끝난 뒤에 삭제하세요.")
+        yield
 
+
+def start_job(
+    kind: str,
+    owner_type: str,
+    owner_id: str,
+    args: dict[str, Any],
+    preferred: list[int] | None = None,
+) -> dict[str, Any]:
+    """사이드잡을 기동한다. GPU 슬롯 배정은 여기서만 한다.
+
+    jobs 모듈이 스스로 판단하지 않는 이유: "지금 GPU 가 비었나" 는 학습 큐를 아는 이 모듈만
+    답할 수 있고, 이 모듈은 이미 jobs 를 쓴다. 양쪽이 서로를 import 하면 순환이 된다.
+    학습 기동과 같은 락 안에서 배정해야 둘이 같은 GPU 를 동시에 집지 않는다.
+    """
+    spec = jobs.spec_for(kind)
+    clean = spec.validate(args)
+    with _schedule_lock:
         devices: list[int] = []
-        if fmt in GPU_FORMATS:
-            row = db.query_one("SELECT devices FROM runs WHERE id = ?", (run_id,))
-            wanted = json.loads(row["devices"]) if row else []
-            free = [d for d in wanted if d not in busy_devices()]
+        if spec.needs_gpu(clean):
+            busy = busy_devices()
+            wanted: list[int] = (
+                preferred
+                if preferred is not None
+                else [int(g["index"]) for g in gpu.list_gpus()]  # type: ignore[arg-type]
+            )
+            free = [d for d in wanted if d not in busy]
             if not free:
                 raise RunError(
-                    "이 포맷은 GPU 가 필요한데 지금 학습이 GPU 를 쓰고 있습니다. 학습이 끝난 뒤 다시 시도하세요."
+                    f"이 작업은 GPU 가 필요한데 지금 다른 작업이 쓰고 있습니다. "
+                    f"끝난 뒤 다시 시도하세요."
                 )
             devices = free[:1]
-
-        events = run_dir / "export.jsonl"
-        events.unlink(missing_ok=True)
-
-        env = os.environ.copy()
-        env.update(offline_env())
-        env["PYTHONUNBUFFERED"] = "1"
-        cmd = [
-            sys.executable,
-            str(BACKEND_DIR / "export_worker.py"),
-            "--run-dir", str(run_dir),
-            "--format", fmt,
-            "--weights", weights,
-            "--imgsz", str(imgsz),
-            "--device", ",".join(str(d) for d in devices) if devices else "cpu",
-        ]
-        if half:
-            cmd.append("--half")
-        if dynamic:
-            cmd.append("--dynamic")
-
-        log_file = open(run_dir / "export.log", "ab", buffering=0)
-        started_at = time.time()
-        process = subprocess.Popen(
-            cmd,
-            cwd=str(WEIGHTS_DIR if WEIGHTS_DIR.is_dir() else BACKEND_DIR),
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
-        )
-        _exports[run_id] = {"process": process, "devices": devices, "format": fmt}
-        _export_record_path(run_id).write_text(
-            json.dumps({
-                "pid": process.pid,
-                "started_at": started_at,
-                "devices": devices,
-                "format": fmt,
-            }),
-            encoding="utf-8",
-        )
-
-    return export_status(run_id)
-
-
-def stop_export(run_id: str) -> None:
-    """진행 중인 내보내기를 종료한다. run 삭제 전에 부른다."""
-    job = _exports.pop(run_id, None)
-    record = _export_record(run_id)
-    pid = job["process"].pid if job else record.get("pid")
-    if pid and (job is not None or _pid_is_our_worker(int(pid), record.get("started_at"))):
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, check=False)
-        else:
-            try:
-                os.kill(int(pid), 9)
-            except OSError:
-                pass
-    _export_record_path(run_id).unlink(missing_ok=True)
-
-
-def export_status(run_id: str) -> dict[str, Any]:
-    run_dir = run_dir_for(run_id)
-    events_path = run_dir / "export.jsonl"
-    events: list[dict[str, Any]] = []
-    if events_path.exists():
-        for line in events_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-
-    record = _export_record(run_id)
-    alive = export_alive(run_id)
-    end = next((e for e in reversed(events) if e.get("t") == "end"), None)
-
-    if alive:
-        status = "running"
-    elif end:
-        status = end.get("status", "completed")
-        # 끝났으면 GPU 예약 기록을 지운다. 남겨두면 슬롯이 영원히 물려 있는 것처럼 보인다.
-        _exports.pop(run_id, None)
-        _export_record_path(run_id).unlink(missing_ok=True)
-    elif record or run_id in _exports:
-        # 프로세스는 끝났는데 end 이벤트가 없다 → 워커가 죽었다
-        status = "failed"
-        end = {
-            "status": "failed",
-            "error": "내보내기 프로세스가 결과를 남기지 못하고 종료되었습니다. export.log 를 확인하세요.",
-        }
-        _exports.pop(run_id, None)
-        _export_record_path(run_id).unlink(missing_ok=True)
-    else:
-        status = "idle"
-
-    fmt = record.get("format") or (_exports.get(run_id, {}).get("format"))
-    return {
-        "status": status,
-        "events": events,
-        "result": end,
-        "format": fmt or (events[0].get("format") if events else None),
-    }
+        try:
+            return jobs.spawn(kind, owner_type, owner_id, clean, devices)
+        except sqlite3.IntegrityError as exc:
+            # 부분 유니크 인덱스 위반 = 같은 소유자에 같은 종류의 잡이 이미 돌고 있다.
+            # 안 잡으면 친절한 안내가 500 으로 퇴화한다.
+            raise RunError(f"이미 {spec.label} 작업이 진행 중입니다.") from exc
 
 
 async def scheduler_loop() -> None:

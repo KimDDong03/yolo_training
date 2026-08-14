@@ -22,6 +22,7 @@ from app.services import (
     diagnose_fail,
     event_stream,
     gpu,
+    jobs,
     models,
     param_schema,
     predict,
@@ -129,14 +130,14 @@ def delete_run(run_id: str) -> dict[str, str]:
         raise HTTPException(
             409, "진행 중인 학습은 삭제할 수 없습니다. 먼저 정지하세요."
         )
-    if run_manager.export_alive(run_id):
-        # 폴더를 지워도 내보내기 프로세스는 계속 돌면서 GPU 를 물고 있다.
-        raise HTTPException(409, "내보내는 중입니다. 끝난 뒤에 삭제하세요.")
-
     # 파일을 먼저 지우고, 성공했을 때만 DB 행을 지운다. 순서를 바꾸거나 실패를 삼키면
     # 목록에서는 사라졌는데 디스크에는 가중치가 남아 손댈 방법이 없어진다.
+    # 잡 검사와 삭제는 같은 락 안에서 해야 한다 — 따로 하면 그 사이에 잡이 시작된다.
     try:
-        fsops.remove_tree(run_manager.run_dir_for(run_id))
+        with run_manager.exclusive_delete("run", run_id):
+            fsops.remove_tree(run_manager.run_dir_for(run_id))
+    except run_manager.RunError as exc:
+        raise HTTPException(409, str(exc)) from exc
     except OSError as exc:
         raise HTTPException(
             409,
@@ -204,30 +205,44 @@ async def run_predict(
         raise HTTPException(400, str(exc)) from exc
 
 
+def _as_export(job: dict[str, Any]) -> dict[str, Any]:
+    """잡 상태를 예전 내보내기 응답 모양으로 맞춘다.
+
+    프론트(types.ts 의 ExportStatus)가 쓰는 키는 status/events/result/format 넷이고,
+    TS 인터페이스는 여분의 키를 무시한다. 그래서 잡으로 갈아끼우면서 화면은 건드리지 않는다.
+    """
+    events = job.get("events") or []
+    fmt = job.get("args", {}).get("format") or (
+        events[0].get("format") if events else None
+    )
+    return {**job, "format": fmt}
+
+
 @router.post("/{run_id}/export")
 def start_export(run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """가중치를 다른 포맷으로 변환한다. 오래 걸리므로 별도 프로세스로 띄우고 폴링으로 확인한다."""
     _run_or_404(run_id)
-    fmt = str(payload.get("format", "onnx"))
-    if fmt not in {"onnx", "torchscript", "engine"}:
-        raise HTTPException(422, f"지원하지 않는 포맷입니다: {fmt}")
+    weights = str(payload.get("weights", "train/weights/best.pt"))
+    if not (run_manager.run_dir_for(run_id) / weights).is_file():
+        raise HTTPException(404, f"가중치를 찾을 수 없습니다: {weights}")
     try:
-        return run_manager.start_export(
-            run_id,
-            fmt,
-            str(payload.get("weights", "train/weights/best.pt")),
-            imgsz=int(payload.get("imgsz", 640)),
-            half=bool(payload.get("half", False)),
-            dynamic=bool(payload.get("dynamic", False)),
+        # GPU 가 필요한 포맷(TensorRT)은 이 run 이 쓰던 GPU 를 먼저 노린다.
+        row = db.query_one("SELECT devices FROM runs WHERE id = ?", (run_id,))
+        preferred = json.loads(row["devices"]) if row else None
+        job = run_manager.start_job(
+            "export", "run", run_id, {**payload, "weights": weights}, preferred
         )
+    except jobs.JobError as exc:
+        raise HTTPException(422, str(exc)) from exc
     except run_manager.RunError as exc:
         raise HTTPException(409, str(exc)) from exc
+    return _as_export(job)
 
 
 @router.get("/{run_id}/export")
 def export_status(run_id: str) -> dict[str, Any]:
     _run_or_404(run_id)
-    return run_manager.export_status(run_id)
+    return _as_export(jobs.status("export", "run", run_id))
 
 
 @router.get("/{run_id}/weights")

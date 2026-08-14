@@ -38,10 +38,14 @@ def main() -> int:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--half", action="store_true")
     parser.add_argument("--dynamic", action="store_true")
+    # 잡 관리로 넘어오면서 진행 상황이 소유자 폴더 아래로 모인다.
+    # 인자가 없으면 예전 경로에 쓴다 — 이 워커를 직접 돌리던 방식을 깨지 않는다.
+    parser.add_argument("--events", default=None)
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir).resolve()
-    events = run_dir / "export.jsonl"
+    events = Path(args.events).resolve() if args.events else run_dir / "export.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
     weights = (run_dir / args.weights).resolve()
 
     write(

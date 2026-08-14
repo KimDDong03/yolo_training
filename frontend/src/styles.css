@@ -1,18 +1,12 @@
-/* 단독망 전제: 웹폰트를 불러오지 않고 시스템 폰트만 쓴다. */
-:root {
-  --bg: #0f1115;
-  --panel: #171a21;
-  --panel-2: #1d212a;
-  --line: #2a2f3a;
-  --text: #e6e8ee;
-  --muted: #949cad;
-  --accent: #4f8cff;
-  --ok: #35c46b;
-  --warn: #e2b23c;
-  --err: #e2564a;
-  --mono: 'Cascadia Mono', Consolas, 'D2Coding', monospace;
-  font-family: 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
-}
+@import './styles/tokens.css';
+@import './styles/components.css';
+
+/*
+ * 리셋 · 요소 기본형 · 유틸.
+ *
+ * 유틸은 실제로 반복되던 인라인 스타일만 흡수한다 — 한 번만 쓰이는 치수는 인라인으로 남긴다.
+ * 여기에 클래스를 계속 늘리면 CSS 프레임워크를 손으로 다시 쓰는 꼴이 된다.
+ */
 
 * { box-sizing: border-box; }
 
@@ -20,120 +14,88 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
+
+/* 포커스가 어디 있는지 항상 보여야 한다. 마우스 클릭에는 뜨지 않는다(:focus-visible). */
+:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-sm); }
 
 button {
   font: inherit;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 12px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-4);
   cursor: pointer;
 }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.danger { border-color: var(--err); color: var(--err); }
+button.ghost { background: transparent; }
+/* 눌린 상태를 색으로도 보여준다. aria-pressed 가 곧 스타일 조건이라 둘이 어긋나지 않는다. */
+button[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
 
-input, select {
+/* 내려받기 링크. <a> 안에 <button> 을 넣으면 대화형 요소 중첩이라 스크린리더가 헷갈린다. */
+a.button {
+  display: inline-block;
   font: inherit;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 5px 8px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-4);
+  text-decoration: none;
+}
+a.button:hover { border-color: var(--accent); }
+
+input, select, textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 5px var(--sp-3);
   width: 100%;
 }
-input[type='checkbox'] { width: auto; }
-input:focus, select:focus { outline: 1px solid var(--accent); }
+input[type='checkbox'], input[type='radio'] { width: auto; accent-color: var(--accent); }
+input[type='range'] { padding: 0; accent-color: var(--accent); }
+input[aria-invalid='true'] { border-color: var(--err); }
 
-.app { display: flex; flex-direction: column; height: 100vh; }
+/* ── 유틸 ─────────────────────────────────────────────── */
+.row { display: flex; align-items: center; gap: var(--sp-3); }
+.row.tight { gap: var(--sp-1); }
+.stack { display: flex; flex-direction: column; gap: var(--sp-3); }
+.wrap { flex-wrap: wrap; }
+.spacer { margin-left: auto; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: var(--sp-4); }
 
-.header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
-}
-.header h1 { font-size: 15px; margin: 0 12px 0 0; font-weight: 600; }
-
-.badge {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  border: 1px solid var(--line);
-}
-.badge.running { color: var(--accent); border-color: var(--accent); }
-.badge.completed { color: var(--ok); border-color: var(--ok); }
-.badge.failed { color: var(--err); border-color: var(--err); }
-.badge.stopped { color: var(--warn); border-color: var(--warn); }
-.badge.queued { color: var(--muted); }
-
-.body { display: flex; flex: 1; min-height: 0; }
-.left { width: 55%; min-width: 380px; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
-.right { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-
-.tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--line); }
-.tab { padding: 6px 12px; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer; color: var(--muted); }
-.tab.active { background: var(--panel); border-color: var(--line); color: var(--text); }
-
-.pane { flex: 1; overflow: auto; padding: 14px; min-height: 0; }
-
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-.card h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; }
-
-.row { display: flex; align-items: center; gap: 8px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
-
-.field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-.field .help { font-size: 11px; color: #6d7788; margin-top: 3px; line-height: 1.4; }
-
-.log {
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.5;
-  background: #0b0d11;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-  flex: 1;
-  min-height: 0;
-}
-.log .warn { color: var(--warn); }
-.log .err { color: var(--err); }
-
-.preview-img { width: 100%; border-radius: 6px; border: 1px solid var(--line); background: #000; display: block; }
-.slider { width: 100%; }
+.btn-sm { font-size: var(--fs-sm); padding: 3px 10px; }
+.btn-xs { font-size: var(--fs-xs); padding: 2px var(--sp-3); }
 
 .muted { color: var(--muted); }
-.small { font-size: 12px; }
+.small { font-size: var(--fs-sm); }
+.tiny { font-size: var(--fs-xs); }
 .mono { font-family: var(--mono); }
 .error { color: var(--err); }
+.slider { width: 100%; }
+.nowrap { white-space: nowrap; }
 
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); }
-th { color: var(--muted); font-weight: 600; }
+.help { font-size: var(--fs-xs); color: var(--muted-2); margin-top: 3px; line-height: 1.4; }
+.help.ok { color: var(--ok); }
+.help.bad { color: var(--err); }
+.help.warn { color: var(--warn); }
 
-.progress { height: 6px; background: var(--panel-2); border-radius: 999px; overflow: hidden; min-width: 120px; flex: 1; }
-.progress > div { height: 100%; background: var(--accent); transition: width 0.3s; }
-
-.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
-.gallery figure { margin: 0; }
-.gallery figcaption { font-size: 11px; color: var(--muted); margin-top: 4px; }
-
-.drop {
-  border: 1px dashed var(--line);
-  border-radius: 8px;
-  padding: 18px;
-  text-align: center;
-  color: var(--muted);
+/* 화면에서는 감추고 스크린리더에는 남긴다. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
-.drop.over { border-color: var(--accent); color: var(--accent); }

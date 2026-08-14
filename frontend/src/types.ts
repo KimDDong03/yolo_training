@@ -188,3 +188,16 @@ export interface Artifacts {
   weights: string[]
   epochs: Record<string, string[]>
 }
+
+/**
+ * 지금 화면에 무엇이 떠 있는가.
+ *
+ * 예전에는 `selected: string | null` 하나로 "run 상세" 와 "새 학습 설정" 을 겸했다.
+ * 그래서 새 학습으로 돌아가려면 셀렉트에서 빈 항목을 다시 고르는 수밖에 없었다.
+ * 화면을 명시적으로 나열해 두면 그런 숨은 모드 전환이 사라진다.
+ */
+export type View =
+  | { kind: 'new' }
+  | { kind: 'run'; id: string }
+  | { kind: 'datasets' }
+  | { kind: 'compare' }

@@ -1,251 +1,188 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from './api'
 import { LossChart, MetricsChart } from './components/Charts'
 import { CompareView } from './components/CompareView'
+import { DatasetsView } from './components/DatasetsView'
 import { LogView } from './components/LogView'
 import { NewRunPanel } from './components/NewRunPanel'
 import { PreviewPanel } from './components/PreviewPanel'
-import type { Dataset, Gpu, Run } from './types'
+import { RunHeader } from './components/RunHeader'
+import { COMPARE_LIMIT, Sidebar } from './components/Sidebar'
+import { SplitPane } from './components/SplitPane'
+import { useConfirm } from './components/ui/Dialog'
+import { useToast } from './components/ui/Toast'
+import type { Dataset, Gpu, Run, View } from './types'
+import { useResource } from './useResource'
 import { useRunStream } from './useRunStream'
 
+/** 폴링이 이만큼 연속으로 실패하면 배너를 띄운다. 한두 번 삐끗한 것으로는 소란 떨지 않는다. */
+const OFFLINE_AFTER = 3
+
 export default function App() {
-  const [runs, setRuns] = useState<Run[]>([])
-  const [datasets, setDatasets] = useState<Dataset[]>([])
-  const [gpus, setGpus] = useState<Gpu[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
-  const [detail, setDetail] = useState<Run | null>(null)
-  const [error, setError] = useState('')
+  const [view, setView] = useState<View>({ kind: 'new' })
   const [compare, setCompare] = useState<string[]>([])
+  const [detail, setDetail] = useState<Run | null>(null)
 
-  const refreshRuns = useCallback(() => api.runs().then(setRuns).catch(() => {}), [])
-  const refreshDatasets = useCallback(() => api.datasets().then(setDatasets).catch(() => {}), [])
+  const confirm = useConfirm()
+  const toast = useToast()
+
+  const runs = useResource<Run[]>(() => api.runs(), [], 2000)
+  const gpus = useResource<Gpu[]>(() => api.gpus().then((r) => r.gpus), [], 2000)
+  const datasets = useResource<Dataset[]>(() => api.datasets(), [])
+
+  const runId = view.kind === 'run' ? view.id : null
+  const current = runId ? (runs.data.find((r) => r.id === runId) ?? null) : null
+  const stream = useRunStream(runId)
+
+  /*
+   * 사이드바가 항상 보이면서 지금 보고 있는 run 도 바로 지울 수 있게 됐다.
+   * 사라진 id 를 계속 가리키면 상세는 404, WebSocket 은 4404 를 받는다. 여기서 정리한다.
+   */
+  useEffect(() => {
+    if (runs.status !== 'ready') return // 로딩 중 빈 목록으로 화면을 튕기면 안 된다
+    const ids = new Set(runs.data.map((r) => r.id))
+    setCompare((c) => (c.every((id) => ids.has(id)) ? c : c.filter((id) => ids.has(id))))
+    setView((v) => (v.kind === 'run' && !ids.has(v.id) ? { kind: 'new' } : v))
+  }, [runs.status, runs.data])
 
   useEffect(() => {
-    refreshRuns()
-    refreshDatasets()
-  }, [refreshRuns, refreshDatasets])
+    setView((v) => (v.kind === 'compare' && compare.length === 0 ? { kind: 'new' } : v))
+  }, [compare.length])
 
-  // 실행 목록과 GPU 상태는 가볍게 주기 폴링한다. 무거운 스트림은 WebSocket 이 담당한다.
+  // 상세(dataset 포함)는 목록에 없는 정보다. 상태가 바뀔 때마다 다시 받는다.
+  // run 을 빠르게 옮겨 다니면 이전 run 의 응답이 늦게 도착할 수 있어 취소 플래그를 둔다.
   useEffect(() => {
-    const tick = () => {
-      refreshRuns()
-      api.gpus().then((r) => setGpus(r.gpus)).catch(() => {})
-    }
-    tick()
-    const timer = setInterval(tick, 2000)
-    return () => clearInterval(timer)
-  }, [refreshRuns])
-
-  useEffect(() => {
-    if (!selected) {
+    if (!runId) {
       setDetail(null)
       return
     }
-    api.run(selected).then(setDetail).catch(() => setDetail(null))
-  }, [selected, runs.find((r) => r.id === selected)?.status])
-
-  const stream = useRunStream(selected)
-  const current = runs.find((r) => r.id === selected) ?? null
-
-  const progress = useMemo(() => {
-    const start = stream.events.find((e) => e.t === 'start')
-    const last = [...stream.events].reverse().find((e) => e.t === 'epoch')
-    const total = last?.total_epochs ?? start?.total_epochs ?? 0
-    const done = last?.epoch ?? 0
-    const batch = stream.batch
-    const withinEpoch = batch?.n ? (batch.i ?? 0) / batch.n : 0
-    const fraction = total ? Math.min((done + withinEpoch) / total, 1) : 0
-    return { total, done, fraction, eta: last?.eta_s ?? null, batch }
-  }, [stream.events, stream.batch])
+    let cancelled = false
+    api
+      .run(runId)
+      .then((r) => !cancelled && setDetail(r))
+      .catch(() => !cancelled && setDetail(null))
+    return () => {
+      cancelled = true
+    }
+  }, [runId, current?.status])
 
   async function stop(mode: 'graceful' | 'force') {
-    if (!selected) return
+    if (!runId) return
     try {
-      await api.stopRun(selected, mode)
-      refreshRuns()
+      await api.stopRun(runId, mode)
+      runs.reload()
     } catch (e) {
-      setError(String(e instanceof Error ? e.message : e))
+      toast(String(e instanceof Error ? e.message : e), 'error')
     }
   }
+
+  async function deleteRun(run: Run) {
+    const ok = await confirm({
+      title: `'${run.name}' 을 삭제할까요?`,
+      body: '가중치와 플롯을 포함한 산출물 폴더가 통째로 지워집니다. 되돌릴 수 없습니다.',
+      confirmLabel: '삭제',
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      await api.deleteRun(run.id)
+      // 불변식을 목록 재조회에 맡기지 않는다 — 재조회가 실패하거나 늦으면
+      // 지워진 run 화면에 그대로 남는다. 지운 즉시 여기서 끊는다.
+      setCompare((c) => c.filter((id) => id !== run.id))
+      setView((v) => (v.kind === 'run' && v.id === run.id ? { kind: 'new' } : v))
+      toast(`${run.name} 삭제됨`, 'success')
+    } catch (e) {
+      toast(String(e instanceof Error ? e.message : e), 'error')
+    }
+    runs.reload()
+  }
+
+  const offline = runs.failures >= OFFLINE_AFTER
 
   return (
     <div className="app">
       <header className="header">
         <h1>YOLO 학습 콘솔</h1>
-
-        <select value={selected ?? ''} onChange={(e) => setSelected(e.target.value || null)} style={{ width: 320 }}>
-          <option value="">＋ 새 학습 설정</option>
-          {runs.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name} · {r.id} · {r.status}
-            </option>
-          ))}
-        </select>
-
-        {current && (
-          <>
-            <span className={`badge ${current.status}`}>{statusLabel(current.status)}</span>
-            {progress.total > 0 && (
-              <>
-                <span className="small muted">
-                  {progress.done}/{progress.total} 에폭
-                </span>
-                <div className="progress" style={{ maxWidth: 220 }}>
-                  <div style={{ width: `${progress.fraction * 100}%` }} />
-                </div>
-                {progress.eta != null && current.status === 'running' && (
-                  <span className="small muted">남은 시간 {formatEta(progress.eta)}</span>
-                )}
-              </>
-            )}
-            {current.status === 'running' && (
-              <>
-                <button onClick={() => stop('graceful')}>안전 정지</button>
-                <button className="danger" onClick={() => stop('force')}>강제 종료</button>
-              </>
-            )}
-            {current.status === 'queued' && <button onClick={() => stop('graceful')}>대기 취소</button>}
-            <span className="small muted">{stream.connected ? '● 연결됨' : '○ 연결 끊김'}</span>
-          </>
-        )}
-
-        <span className="small muted" style={{ marginLeft: 'auto' }}>
-          {gpus.map((g) => `#${g.index} ${g.utilization}% ${Math.round(g.memory_used_mb / 1024)}/${Math.round(g.memory_total_mb / 1024)}GB`).join('  ')}
+        <span className="small muted mono spacer">
+          {gpus.data
+            .map(
+              (g) =>
+                `#${g.index} ${g.utilization}% ${Math.round(g.memory_used_mb / 1024)}/${Math.round(g.memory_total_mb / 1024)}GB`,
+            )
+            .join('  ')}
         </span>
       </header>
 
-      {error && <div className="card error" style={{ margin: 10 }} onClick={() => setError('')}>{error}</div>}
+      {offline && (
+        <div className="banner" role="status">
+          <span>서버에 연결하지 못하고 있습니다 ({runs.failures}회 연속 실패). 화면의 값이 오래된 것일 수 있습니다.</span>
+          <button className="btn-xs spacer" onClick={() => runs.reload()}>
+            다시 시도
+          </button>
+        </div>
+      )}
 
       <div className="body">
-        <div className="left">
-          {selected ? (
-            <PreviewPanel runId={selected} events={stream.events} dataset={detail?.dataset} />
-          ) : (
+        <Sidebar
+          runs={runs.data}
+          runsStatus={runs.status}
+          onRetryRuns={() => runs.reload()}
+          datasetCount={datasets.data.length}
+          view={view}
+          compare={compare}
+          onNavigate={setView}
+          onToggleCompare={(id, on) =>
+            setCompare((c) => (on ? (c.length >= COMPARE_LIMIT ? c : [...c, id]) : c.filter((x) => x !== id)))
+          }
+          onClearCompare={() => setCompare([])}
+          onDeleteRun={deleteRun}
+        />
+
+        <main className="main">
+          {view.kind === 'run' && current && <RunHeader run={current} stream={stream} onStop={stop} />}
+
+          {view.kind === 'new' && (
             <NewRunPanel
-              datasets={datasets}
-              gpus={gpus}
-              onDatasetsChanged={refreshDatasets}
+              datasets={datasets.data}
+              datasetsStatus={datasets.status}
+              onRetryDatasets={() => datasets.reload()}
+              gpus={gpus.data}
+              gpusStatus={gpus.status}
+              onRetryGpus={() => gpus.reload()}
+              onDatasetsChanged={() => datasets.reload()}
               onStarted={(id) => {
-                refreshRuns()
-                setSelected(id)
+                runs.reload()
+                setView({ kind: 'run', id })
               }}
             />
           )}
-        </div>
 
-        <div className="right">
-          {selected ? (
-            <div className="pane" style={{ display: 'flex', flexDirection: 'column' }}>
-              <MetricsChart events={stream.events} />
-              <LossChart events={stream.events} />
-              {current?.error && <div className="card error small">{current.error}</div>}
-              <LogView lines={stream.logs} />
-            </div>
-          ) : (
+          {view.kind === 'run' && runId && (
+            <SplitPane
+              storageKey="yolo.split.run"
+              label="예측 화면과 지표 화면의 너비"
+              left={<PreviewPanel runId={runId} events={stream.events} dataset={detail?.dataset} />}
+              right={
+                <div className="pane stack">
+                  <MetricsChart events={stream.events} />
+                  <LossChart events={stream.events} />
+                  <LogView lines={stream.logs} />
+                </div>
+              }
+            />
+          )}
+
+          {view.kind === 'datasets' && (
+            <DatasetsView datasets={datasets.data} status={datasets.status} onChanged={() => datasets.reload()} />
+          )}
+
+          {view.kind === 'compare' && (
             <div className="pane">
               <CompareView runIds={compare} />
-
-              <div className="card">
-                <h3 className="row" style={{ gap: 8 }}>
-                  실행 기록
-                  {compare.length > 0 && (
-                    <button style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px' }} onClick={() => setCompare([])}>
-                      비교 선택 해제 ({compare.length})
-                    </button>
-                  )}
-                </h3>
-                {runs.length === 0 ? (
-                  <p className="muted small">아직 학습 기록이 없습니다. 왼쪽에서 데이터셋을 등록하고 시작하세요.</p>
-                ) : (
-                  <table>
-                    <thead>
-                      <tr><th title="비교할 실행 선택">비교</th><th>이름</th><th>상태</th><th>GPU</th><th>시작</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {runs.map((r) => (
-                        <tr key={r.id}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked={compare.includes(r.id)}
-                              onChange={(e) =>
-                                setCompare((c) => (e.target.checked ? [...c, r.id] : c.filter((x) => x !== r.id)))
-                              }
-                            />
-                          </td>
-                          <td style={{ cursor: 'pointer' }} onClick={() => setSelected(r.id)}>{r.name}</td>
-                          <td><span className={`badge ${r.status}`}>{statusLabel(r.status)}</span></td>
-                          <td>{r.devices.length ? r.devices.join(',') : 'cpu'}</td>
-                          <td className="muted">{new Date(r.created_at * 1000).toLocaleString('ko-KR')}</td>
-                          <td>
-                            <button
-                              style={{ fontSize: 11, padding: '2px 8px' }}
-                              disabled={r.status === 'running' || r.status === 'queued'}
-                              onClick={async () => {
-                                await api.deleteRun(r.id).catch((e) => setError(String(e)))
-                                refreshRuns()
-                              }}
-                            >
-                              삭제
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-
-              <div className="card">
-                <h3>등록된 데이터셋</h3>
-                {datasets.length === 0 ? (
-                  <p className="muted small">없습니다.</p>
-                ) : (
-                  <table>
-                    <thead>
-                      <tr><th>이름</th><th>출처</th><th>이미지</th><th>클래스</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {datasets.map((d) => (
-                        <tr key={d.id}>
-                          <td>{d.name}</td>
-                          <td className="muted">{d.source === 'zip' ? 'zip 업로드' : '경로 참조'}</td>
-                          <td>{d.report.total_images.toLocaleString()}</td>
-                          <td className="muted">{d.classes.join(', ')}</td>
-                          <td>
-                            <button
-                              style={{ fontSize: 11, padding: '2px 8px' }}
-                              onClick={async () => {
-                                await api.deleteDataset(d.id).catch((e) => setError(String(e instanceof Error ? e.message : e)))
-                                refreshDatasets()
-                              }}
-                            >
-                              삭제
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
             </div>
           )}
-        </div>
+        </main>
       </div>
     </div>
   )
-}
-
-function statusLabel(status: string) {
-  return { queued: '대기', running: '학습중', completed: '완료', stopped: '정지됨', failed: '실패' }[status] ?? status
-}
-
-function formatEta(seconds: number) {
-  const s = Math.max(0, Math.round(seconds))
-  const m = Math.floor(s / 60)
-  const h = Math.floor(m / 60)
-  if (h > 0) return `${h}시간 ${m % 60}분`
-  if (m > 0) return `${m}분 ${s % 60}초`
-  return `${s}초`
 }

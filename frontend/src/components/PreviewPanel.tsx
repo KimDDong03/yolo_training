@@ -2,8 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Artifacts, Dataset, ExportStatus, PredictResult, SystemInfo, TrainEvent } from '../types'
 import { DatasetReviewPanel } from './DatasetReviewPanel'
+import { Field } from './ui/Field'
+import { EmptyState, SkeletonRows } from './ui/EmptyState'
+import { TabPanel, Tabs } from './ui/Tabs'
 
-type Tab = '예측' | '플롯' | '추론' | '데이터셋'
+const TABS = [
+  { key: 'pred', label: '예측' },
+  { key: 'plots', label: '플롯' },
+  { key: 'infer', label: '추론' },
+  { key: 'dataset', label: '데이터셋' },
+] as const
+
+const ID_PREFIX = 'preview'
 
 interface Props {
   runId: string
@@ -12,7 +22,7 @@ interface Props {
 }
 
 export function PreviewPanel({ runId, events, dataset }: Props) {
-  const [tab, setTab] = useState<Tab>('예측')
+  const [tab, setTab] = useState<string>('pred')
   const [artifacts, setArtifacts] = useState<Artifacts | null>(null)
   const finished = events.some((e) => e.t === 'end')
 
@@ -23,19 +33,13 @@ export function PreviewPanel({ runId, events, dataset }: Props) {
 
   return (
     <>
-      <div className="tabs">
-        {(['예측', '플롯', '추론', '데이터셋'] as Tab[]).map((t) => (
-          <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-            {t}
-          </div>
-        ))}
-      </div>
-      <div className="pane">
-        {tab === '예측' && <EpochPreview runId={runId} events={events} />}
-        {tab === '플롯' && <Plots runId={runId} artifacts={artifacts} finished={finished} />}
-        {tab === '추론' && <InferenceTest runId={runId} />}
-        {tab === '데이터셋' && <DatasetReviewPanel dataset={dataset} />}
-      </div>
+      <Tabs items={TABS} value={tab} onChange={setTab} label="실행 상세 보기" idPrefix={ID_PREFIX} />
+      <TabPanel idPrefix={ID_PREFIX} tabKey={tab} className="pane">
+        {tab === 'pred' && <EpochPreview runId={runId} events={events} />}
+        {tab === 'plots' && <Plots runId={runId} artifacts={artifacts} finished={finished} />}
+        {tab === 'infer' && <InferenceTest runId={runId} />}
+        {tab === 'dataset' && <DatasetReviewPanel dataset={dataset} />}
+      </TabPanel>
     </>
   )
 }
@@ -63,23 +67,18 @@ function EpochPreview({ runId, events }: { runId: string; events: TrainEvent[] }
     if (follow && frames.length) setIndex(frames.length - 1)
   }, [frames.length, follow])
 
-  // 드래그가 끊기지 않도록 인접 프레임을 미리 받아둔다.
+  // 드래그가 끊기지 않도록 인접 프레임을 미리 받아둔다. 화면에 뜨는 것과 같은 파일이어야 의미가 있다.
   useEffect(() => {
     for (const offset of [-1, 1]) {
-      const frame = frames[index + offset]
-      if (frame) {
-        const img = new Image()
-        img.src = api.fileUrl(runId, frame[1][0] ?? frame[1][0])
-      }
+      const files = frames[index + offset]?.[1]
+      if (!files?.length) continue
+      const img = new Image()
+      img.src = api.fileUrl(runId, files.find((f) => f.includes('_pred')) ?? files[0])
     }
   }, [frames, index, runId])
 
   if (!frames.length) {
-    return (
-      <p className="muted">
-        아직 검증 예측 이미지가 없습니다. 첫 에폭의 검증이 끝나면 여기에 나타납니다.
-      </p>
-    )
+    return <EmptyState title="아직 검증 예측 이미지가 없습니다" description="첫 에폭의 검증이 끝나면 여기에 나타납니다." />
   }
 
   const [epoch, files] = frames[Math.min(index, frames.length - 1)]
@@ -88,15 +87,15 @@ function EpochPreview({ runId, events }: { runId: string; events: TrainEvent[] }
 
   return (
     <>
-      <div className="row" style={{ marginBottom: 10, gap: 12 }}>
+      <div className="row wrap" style={{ marginBottom: 10 }}>
         <strong>{epoch} 에폭</strong>
         <span className="muted small">{frames.length}개 에폭 기록됨</span>
-        <label className="row small muted" style={{ gap: 4, marginLeft: 'auto' }}>
+        <label className="row tight small muted spacer nowrap">
           <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
           최신 따라가기
         </label>
         {gt && (
-          <label className="row small muted" style={{ gap: 4 }}>
+          <label className="row tight small muted nowrap">
             <input type="checkbox" checked={showGt} onChange={(e) => setShowGt(e.target.checked)} />
             정답 대조
           </label>
@@ -106,6 +105,8 @@ function EpochPreview({ runId, events }: { runId: string; events: TrainEvent[] }
       <input
         className="slider"
         type="range"
+        aria-label="에폭 선택"
+        aria-valuetext={`${epoch} 에폭`}
         min={0}
         max={frames.length - 1}
         value={Math.min(index, frames.length - 1)}
@@ -132,19 +133,24 @@ function EpochPreview({ runId, events }: { runId: string; events: TrainEvent[] }
 }
 
 function Plots({ runId, artifacts, finished }: { runId: string; artifacts: Artifacts | null; finished: boolean }) {
-  if (!artifacts) return <p className="muted">불러오는 중…</p>
-  if (!artifacts.plots.length) {
-    return <p className="muted">{finished ? '생성된 플롯이 없습니다.' : '학습이 끝나면 플롯이 생성됩니다.'}</p>
+  if (!artifacts) return <SkeletonRows rows={3} />
+  if (!artifacts.plots.length && !artifacts.weights.length) {
+    return (
+      <EmptyState
+        title={finished ? '생성된 플롯이 없습니다' : '아직 산출물이 없습니다'}
+        description={finished ? undefined : '학습이 끝나면 플롯이 생성됩니다.'}
+      />
+    )
   }
   return (
     <>
       {artifacts.weights.length > 0 && (
         <div className="card">
           <h3>가중치</h3>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <div className="row wrap">
             {artifacts.weights.map((w) => (
-              <a key={w} href={api.fileUrl(runId, w)} download>
-                <button>{w.split('/').pop()} 내려받기</button>
+              <a key={w} className="button btn-sm" href={api.fileUrl(runId, w)} download>
+                {w.split('/').pop()} 내려받기
               </a>
             ))}
           </div>
@@ -213,49 +219,73 @@ function ExportPanel({ runId, weights }: { runId: string; weights: string[] }) {
 
   return (
     <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
-      <div className="small muted" style={{ marginBottom: 6 }}>다른 포맷으로 내보내기</div>
-      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-        <select style={{ width: 170 }} value={format} onChange={(e) => setFormat(e.target.value)}>
-          {formats.map((f) => (
-            <option key={f.value} value={f.value} disabled={!f.ok}>
-              {f.label}{f.ok ? '' : ' (미설치)'}
-            </option>
-          ))}
-        </select>
-        <select style={{ width: 150 }} value={weight} onChange={(e) => setWeight(e.target.value)}>
-          {weights.map((w) => (
-            <option key={w} value={w}>{w.split('/').pop()}</option>
-          ))}
-        </select>
-        <input
-          type="number"
-          style={{ width: 90 }}
-          min={32}
-          max={4096}
-          step={32}
-          value={imgsz}
-          onChange={(e) => setImgsz(Number(e.target.value))}
-        />
-        <label className="row small muted" style={{ gap: 4 }}>
+      <div className="small muted" style={{ marginBottom: 6 }}>
+        다른 포맷으로 내보내기
+      </div>
+      <div className="row wrap" style={{ alignItems: 'flex-end' }}>
+        <Field label="포맷">
+          {(props) => (
+            <select {...props} style={{ width: 170 }} value={format} onChange={(e) => setFormat(e.target.value)}>
+              {formats.map((f) => (
+                <option key={f.value} value={f.value} disabled={!f.ok}>
+                  {f.label}
+                  {f.ok ? '' : ' (미설치)'}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+        <Field label="가중치">
+          {(props) => (
+            <select {...props} style={{ width: 150 }} value={weight} onChange={(e) => setWeight(e.target.value)}>
+              {weights.map((w) => (
+                <option key={w} value={w}>
+                  {w.split('/').pop()}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+        <Field label="imgsz">
+          {(props) => (
+            <input
+              {...props}
+              type="number"
+              style={{ width: 90 }}
+              min={32}
+              max={4096}
+              step={32}
+              value={imgsz}
+              onChange={(e) => setImgsz(Number(e.target.value))}
+            />
+          )}
+        </Field>
+        <label className="row tight small muted nowrap" style={{ paddingBottom: 6 }}>
           <input type="checkbox" checked={half} onChange={(e) => setHalf(e.target.checked)} />
           FP16
         </label>
-        <button className="primary" disabled={running || !weight} onClick={start}>
+        <button className="primary" disabled={running || !weight} onClick={start} style={{ marginBottom: 2 }}>
           {running ? '변환 중…' : '내보내기'}
         </button>
       </div>
 
-      {error && <div className="error small" style={{ marginTop: 8 }}>{error}</div>}
+      {error && (
+        <div className="error small" style={{ marginTop: 8 }}>
+          {error}
+        </div>
+      )}
 
       {result?.status === 'completed' && result.file && (
-        <div className="small" style={{ marginTop: 8 }}>
-          <a href={api.fileUrl(runId, result.file)} download>
-            <button>{result.file.split('/').pop()} 내려받기 ({result.size_mb} MB)</button>
+        <div style={{ marginTop: 8 }}>
+          <a className="button btn-sm" href={api.fileUrl(runId, result.file)} download>
+            {result.file.split('/').pop()} 내려받기 ({result.size_mb} MB)
           </a>
         </div>
       )}
       {result?.status === 'failed' && (
-        <div className="log mono error" style={{ marginTop: 8, maxHeight: 120 }}>{result.error}</div>
+        <div className="log mono error" style={{ marginTop: 8, maxHeight: 120, flex: 'none' }}>
+          {result.error}
+        </div>
       )}
     </div>
   )
@@ -300,7 +330,7 @@ function InferenceTest({ runId }: { runId: string }) {
   }
 
   if (!weights.length) {
-    return <p className="muted">아직 저장된 가중치가 없습니다. 첫 에폭이 끝나면 추론할 수 있습니다.</p>
+    return <EmptyState title="아직 저장된 가중치가 없습니다" description="첫 에폭이 끝나면 추론할 수 있습니다." />
   }
 
   return (
@@ -308,22 +338,32 @@ function InferenceTest({ runId }: { runId: string }) {
       <div className="card">
         <h3>추론 설정</h3>
         <div className="grid">
-          <div className="field">
-            <label>가중치</label>
-            <select value={selected} onChange={(e) => setSelected(e.target.value)}>
-              {weights.map((w) => (
-                <option key={w.value} value={w.value}>
-                  {w.label} ({w.size_mb} MB)
-                </option>
-              ))}
-            </select>
-          </div>
-          <Slider label="확신도 임계값 conf" value={conf} min={0.01} max={0.95} step={0.01} onChange={setConf} />
-          <Slider label="NMS IoU" value={iou} min={0.1} max={0.95} step={0.05} onChange={setIou} />
-          <div className="field">
-            <label>이미지 크기 imgsz</label>
-            <input type="number" min={32} max={4096} step={32} value={imgsz} onChange={(e) => setImgsz(Number(e.target.value))} />
-          </div>
+          <Field label="가중치">
+            {(props) => (
+              <select {...props} value={selected} onChange={(e) => setSelected(e.target.value)}>
+                {weights.map((w) => (
+                  <option key={w.value} value={w.value}>
+                    {w.label} ({w.size_mb} MB)
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <RangeField label="확신도 임계값 conf" value={conf} min={0.01} max={0.95} step={0.01} onChange={setConf} />
+          <RangeField label="NMS IoU" value={iou} min={0.1} max={0.95} step={0.05} onChange={setIou} />
+          <Field label="이미지 크기 imgsz">
+            {(props) => (
+              <input
+                {...props}
+                type="number"
+                min={32}
+                max={4096}
+                step={32}
+                value={imgsz}
+                onChange={(e) => setImgsz(Number(e.target.value))}
+              />
+            )}
+          </Field>
         </div>
         <div className="help">추론은 항상 CPU 에서 실행됩니다 — 학습 중인 GPU 와 경합하지 않기 위해서입니다.</div>
       </div>
@@ -341,38 +381,50 @@ function InferenceTest({ runId }: { runId: string }) {
           const file = e.dataTransfer.files[0]
           if (file) predict(file)
         }}
-        onClick={() => fileRef.current?.click()}
       >
-        {busy ? '추론 중…' : '이미지를 끌어다 놓거나 클릭해서 선택'}
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          style={{ display: 'none' }}
-          onChange={(e) => e.target.files?.[0] && predict(e.target.files[0])}
-        />
+        <button type="button" disabled={busy} onClick={() => fileRef.current?.click()}>
+          {busy ? '추론 중…' : '이미지를 끌어다 놓거나 클릭해서 선택'}
+        </button>
       </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(e) => e.target.files?.[0] && predict(e.target.files[0])}
+      />
 
       {lastFile.current && !busy && (
-        <button style={{ marginTop: 8, fontSize: 12 }} onClick={() => lastFile.current && predict(lastFile.current)}>
+        <button className="btn-sm" style={{ marginTop: 8 }} onClick={() => lastFile.current && predict(lastFile.current)}>
           같은 이미지로 다시 (설정 변경 반영)
         </button>
       )}
 
-      {error && <div className="card error small" style={{ marginTop: 10 }}>{error}</div>}
+      {error && (
+        <div className="card error small" style={{ marginTop: 10 }}>
+          {error}
+        </div>
+      )}
 
       {result && (
         <div style={{ marginTop: 12 }}>
           <img className="preview-img" src={api.fileUrl(runId, result.image)} alt="추론 결과" />
-          <div className="row small muted" style={{ marginTop: 6, gap: 12 }}>
+          <div className="row small muted wrap" style={{ marginTop: 6, gap: 12 }}>
             <span>검출 {result.count}개</span>
             <span>{result.elapsed_ms} ms</span>
             <span>{result.weights}</span>
           </div>
           {result.detections.length > 0 && (
             <table style={{ marginTop: 8 }}>
+              <caption className="sr-only">검출된 객체 목록</caption>
               <thead>
-                <tr><th>클래스</th><th>확신도</th><th>박스 (x1, y1, x2, y2)</th></tr>
+                <tr>
+                  <th scope="col">클래스</th>
+                  <th scope="col">확신도</th>
+                  <th scope="col">박스 (x1, y1, x2, y2)</th>
+                </tr>
               </thead>
               <tbody>
                 {result.detections.map((d, i) => (
@@ -391,7 +443,7 @@ function InferenceTest({ runId }: { runId: string }) {
   )
 }
 
-function Slider({
+function RangeField({
   label,
   value,
   min,
@@ -407,11 +459,18 @@ function Slider({
   onChange: (v: number) => void
 }) {
   return (
-    <div className="field">
-      <label>
-        {label} <span className="mono muted">{value}</span>
-      </label>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
-    </div>
+    <Field label={label} labelExtra={<span className="mono muted"> {value}</span>}>
+      {(props) => (
+        <input
+          {...props}
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+        />
+      )}
+    </Field>
   )
 }

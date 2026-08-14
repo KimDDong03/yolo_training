@@ -1,30 +1,19 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import {
   CartesianGrid,
   Legend,
   Line,
   LineChart,
+  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
+import { chartAxis, chartGrid, chartLegend, chartTooltip, metricSeries, seriesColor } from '../theme'
 import type { TrainEvent } from '../types'
 
-const METRIC_SERIES = [
-  { key: 'mAP50', color: '#4f8cff' },
-  { key: 'mAP50-95', color: '#35c46b' },
-  { key: 'precision', color: '#e2b23c' },
-  { key: 'recall', color: '#b07cff' },
-]
-
-const AXIS = { stroke: '#5b6273', fontSize: 11 }
-const TOOLTIP_STYLE = {
-  background: '#171a21',
-  border: '1px solid #2a2f3a',
-  borderRadius: 6,
-  fontSize: 12,
-}
+const METRIC_KEYS = ['mAP50', 'mAP50-95', 'precision', 'recall']
 
 interface Props {
   events: TrainEvent[]
@@ -41,7 +30,7 @@ export function MetricsChart({ events }: Props) {
     () =>
       epochRows(events).map((e) => ({
         epoch: e.epoch,
-        ...Object.fromEntries(METRIC_SERIES.map((s) => [s.key, e.summary?.[s.key] ?? null])),
+        ...Object.fromEntries(METRIC_KEYS.map((key) => [key, e.summary?.[key] ?? null])),
       })),
     [events],
   )
@@ -63,34 +52,46 @@ export function MetricsChart({ events }: Props) {
 
   return (
     <div className="card">
-      <h3>
-        정확도 지표
+      <div className="card-head">
+        <h3>정확도 지표</h3>
         {last && (
-          <span className="muted" style={{ float: 'right', fontWeight: 400 }}>
+          <span className="muted small spacer" style={{ fontWeight: 400 }}>
             최근 mAP50 {fmt(last['mAP50'] as number | null)} · mAP50-95 {fmt(last['mAP50-95'] as number | null)}
             {best.epoch != null && ` · 최고 ${fmt(best.value)} (${best.epoch}에폭)`}
           </span>
         )}
-      </h3>
+      </div>
       <ResponsiveContainer width="100%" height={190}>
         <LineChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-          <CartesianGrid stroke="#232833" />
-          <XAxis dataKey="epoch" {...AXIS} />
-          <YAxis domain={[0, 1]} {...AXIS} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
-          {METRIC_SERIES.map((s) => (
+          <CartesianGrid stroke={chartGrid.stroke} />
+          <XAxis dataKey="epoch" stroke={chartAxis.stroke} tick={chartAxis.tick} tickLine={chartAxis.tickLine} />
+          <YAxis domain={[0, 1]} stroke={chartAxis.stroke} tick={chartAxis.tick} tickLine={chartAxis.tickLine} />
+          <Tooltip contentStyle={chartTooltip.contentStyle} labelStyle={chartTooltip.labelStyle} />
+          <Legend wrapperStyle={chartLegend.wrapperStyle} />
+          {METRIC_KEYS.map((key) => (
             <Line
-              key={s.key}
+              key={key}
               type="monotone"
-              dataKey={s.key}
-              stroke={s.color}
+              dataKey={key}
+              stroke={metricSeries[key]}
               dot={false}
               strokeWidth={1.8}
               isAnimationActive={false}
               connectNulls
             />
           ))}
+          {/* 최고 지점을 찍어 두면 "지금이 최고인가"를 눈으로 바로 판단할 수 있다. */}
+          {best.epoch != null && (
+            <ReferenceDot
+              x={best.epoch}
+              y={best.value}
+              r={4}
+              fill={metricSeries['mAP50-95']}
+              stroke="#fff"
+              strokeWidth={1}
+              isFront
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -98,6 +99,9 @@ export function MetricsChart({ events }: Props) {
 }
 
 export function LossChart({ events }: Props) {
+  // 손실은 초반에 급락해 뒷부분이 눌린다. 로그 축이 후반 수렴을 보기에 낫다.
+  const [logScale, setLogScale] = useState(false)
+
   const { data, series } = useMemo(() => {
     const rows = epochRows(events)
     const keys = new Set<string>()
@@ -112,24 +116,44 @@ export function LossChart({ events }: Props) {
     }
   }, [events])
 
-  const colors = ['#4f8cff', '#35c46b', '#e2b23c', '#b07cff', '#e2564a', '#3fc7c7']
-
   return (
     <div className="card">
-      <h3>손실</h3>
+      <div className="card-head">
+        <h3>손실</h3>
+        <span className="segmented spacer" role="radiogroup" aria-label="손실 축 눈금">
+          {([false, true] as const).map((v) => (
+            <button
+              key={String(v)}
+              type="button"
+              role="radio"
+              aria-checked={logScale === v}
+              onClick={() => setLogScale(v)}
+            >
+              {v ? '로그' : '선형'}
+            </button>
+          ))}
+        </span>
+      </div>
       <ResponsiveContainer width="100%" height={180}>
         <LineChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-          <CartesianGrid stroke="#232833" />
-          <XAxis dataKey="epoch" {...AXIS} />
-          <YAxis {...AXIS} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <CartesianGrid stroke={chartGrid.stroke} />
+          <XAxis dataKey="epoch" stroke={chartAxis.stroke} tick={chartAxis.tick} tickLine={chartAxis.tickLine} />
+          <YAxis
+            scale={logScale ? 'log' : 'linear'}
+            domain={logScale ? ['auto', 'auto'] : [0, 'auto']}
+            allowDataOverflow={false}
+            stroke={chartAxis.stroke}
+            tick={chartAxis.tick}
+            tickLine={chartAxis.tickLine}
+          />
+          <Tooltip contentStyle={chartTooltip.contentStyle} labelStyle={chartTooltip.labelStyle} />
+          <Legend wrapperStyle={chartLegend.wrapperStyle} />
           {series.map((key, i) => (
             <Line
               key={key}
               type="monotone"
               dataKey={key}
-              stroke={colors[i % colors.length]}
+              stroke={seriesColor(i)}
               dot={false}
               strokeWidth={1.6}
               isAnimationActive={false}

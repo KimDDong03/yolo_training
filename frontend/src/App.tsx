@@ -6,6 +6,7 @@ import { DatasetsView } from './components/DatasetsView'
 import { LogView } from './components/LogView'
 import { NewRunPanel } from './components/NewRunPanel'
 import { PreviewPanel } from './components/PreviewPanel'
+import { FailureCard } from './components/FailureCard'
 import { RunHeader } from './components/RunHeader'
 import { COMPARE_LIMIT, Sidebar } from './components/Sidebar'
 import { SplitPane } from './components/SplitPane'
@@ -140,6 +141,15 @@ export default function App() {
 
         <main className="main">
           {view.kind === 'run' && current && <RunHeader run={current} stream={stream} onStop={stop} />}
+          {view.kind === 'run' && current?.status === 'failed' && (
+            <FailureCard
+              run={current}
+              onStarted={(id) => {
+                runs.reload()
+                setView({ kind: 'run', id })
+              }}
+            />
+          )}
 
           {view.kind === 'new' && (
             <NewRunPanel

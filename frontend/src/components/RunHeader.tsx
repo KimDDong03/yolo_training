@@ -130,7 +130,9 @@ export function RunHeader({ run, stream, onStop }: Props) {
         <Stat label="경과 시간" value={stats.elapsed == null ? '-' : formatDuration(stats.elapsed)} />
       </dl>
 
-      {run.error && <div className="error small">{run.error}</div>}
+      {/* 실패한 run 의 오류는 아래 FailureCard 가 원인·처방과 함께 보여준다(원문은 거기 접혀 있다).
+          여기서 또 뿌리면 같은 문장이 두 번 나온다. */}
+      {run.error && run.status !== 'failed' && <div className="error small">{run.error}</div>}
     </header>
   )
 }

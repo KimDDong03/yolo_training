@@ -2,6 +2,7 @@ import type {
   Artifacts,
   Dataset,
   DatasetReview,
+  Diagnosis,
   ExportStatus,
   Gpu,
   ModelCheck,
@@ -85,12 +86,15 @@ export const api = {
     devices: number[]
     params: Record<string, unknown>
     options: Record<string, unknown>
+    /** 이 실행이 어떤 실패한 실행의 재시도인지. */
+    retry_of?: string
   }) =>
     req<Run>('/api/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+  diagnosis: (id: string) => req<Diagnosis>(`/api/runs/${id}/diagnosis`),
   stopRun: (id: string, mode: 'graceful' | 'force') =>
     req<Run>(`/api/runs/${id}/stop?mode=${mode}`, { method: 'POST' }),
   deleteRun: (id: string) => req<{ status: string }>(`/api/runs/${id}`, { method: 'DELETE' }),

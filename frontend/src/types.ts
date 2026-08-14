@@ -154,14 +154,47 @@ export interface Run {
   devices: number[]
   pid: number | null
   error: string | null
+  /** 이 실행이 재시도라면 원본 실행 ID. */
+  retry_of: string | null
   created_at: number
   started_at: number | null
   finished_at: number | null
   dataset?: Dataset | null
 }
 
+/** 재시도할 때 바뀌는 값 하나. */
+export interface DiagnosisChange {
+  from: unknown
+  to: unknown
+}
+
+export interface Diagnosis {
+  run_id: string
+  status: RunStatus
+  /** 규칙에 걸렸는가. false 면 원문과 로그만 보여준다. */
+  matched: boolean
+  code: string | null
+  title: string | null
+  cause: string | null
+  fix: string | null
+  /** 규칙에 걸린 로그 줄. */
+  evidence: string[]
+  log_tail: string[]
+  /**
+   * 같은 설정으로 다시 돌려서 결과가 달라질 여지가 없으면 null 이다
+   * (예: 라벨이 없는 경우 — 데이터를 고치기 전에는 똑같이 실패한다).
+   */
+  retry: {
+    label: string
+    changed: Record<string, DiagnosisChange>
+    params: Record<string, unknown>
+    options: Record<string, unknown>
+    devices: number[]
+  } | null
+}
+
 export interface TrainEvent {
-  t: 'start' | 'batch' | 'epoch' | 'final_val' | 'artifact' | 'checkpoint' | 'end'
+  t: 'start' | 'batch' | 'epoch' | 'final_val' | 'artifact' | 'checkpoint' | 'end' | 'warning'
   ts: number
   epoch?: number
   total_epochs?: number
@@ -181,6 +214,13 @@ export interface TrainEvent {
   classes?: string[]
   device?: string
   model?: string
+  /** 이 run 이 잡아 본 VRAM 최대치(GB). CPU 학습이면 null. */
+  mem_gb?: number | null
+  /** NaN/Inf 라서 값을 싣지 못한 지표 키. 값 대신 사실만 남긴다. */
+  nonfinite?: string[]
+  loss_nan?: boolean
+  /** t === 'warning' 일 때의 사람이 읽는 문장. */
+  message?: string
 }
 
 export interface Artifacts {

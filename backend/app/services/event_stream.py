@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,25 @@ from typing import Any
 POLL_INTERVAL = 0.25
 LOG_TAIL_LINES = 2000
 # 차트 복원에 필요한 이벤트만 메모리에 남긴다. batch 는 진행률이라 최신 하나면 충분하다.
-KEEP_KINDS = {"start", "epoch", "final_val", "artifact", "checkpoint", "end"}
+# warning 이 빠지면 이상 감지 배지가 라이브에서만 보이고 새로고침하면 사라진다.
+KEEP_KINDS = {"start", "epoch", "final_val", "artifact", "checkpoint", "end", "warning"}
+
+
+def json_safe(obj: Any) -> Any:
+    """파싱된 이벤트에서 NaN/Inf 를 None 으로 바꾼다.
+
+    파이썬 json 은 NaN 리터럴을 읽고 또 그대로 쓰지만, 브라우저 JSON.parse 는 거기서
+    SyntaxError 로 죽는다. 워커는 이제 non-finite 를 쓰지 않지만
+    (hooks/yoloweb_events.py 의 _num), 그 수정 이전에 만들어진 events.jsonl 이
+    디스크에 남아 있다. 과거 run 을 열었다고 스트림이 멎으면 안 된다.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {key: json_safe(value) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [json_safe(value) for value in obj]
+    return obj
 
 
 class _Tailer:
@@ -65,7 +84,11 @@ class _Tailer:
         self.offset += len(chunk)
         self._buffer += chunk
         *complete, self._buffer = self._buffer.split(b"\n")
-        return [line.decode("utf-8", errors="replace").rstrip("\r") for line in complete if line.strip()]
+        return [
+            line.decode("utf-8", errors="replace").rstrip("\r")
+            for line in complete
+            if line.strip()
+        ]
 
 
 class RunStream:
@@ -134,7 +157,7 @@ class RunStream:
         """파일에서 새 내용을 읽어 메모리 캐시와 구독자에게 반영한다 (동기)."""
         for line in self.events.read_lines():
             try:
-                obj = json.loads(line)
+                obj = json_safe(json.loads(line))
             except json.JSONDecodeError:
                 continue
             kind = obj.get("t")

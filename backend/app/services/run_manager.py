@@ -177,6 +177,7 @@ def create_run(
     params: dict[str, Any],
     options: dict[str, Any],
     devices: list[int],
+    retry_of: str | None = None,
 ) -> dict[str, Any]:
     merged = param_schema.defaults_dict("params")
     merged.update(params)
@@ -218,6 +219,7 @@ def create_run(
             "options": merged_options,
             "devices": devices,
             "source_model": resolved_model,  # 사용자가 고른 원본 (params.model 은 run 폴더 안의 복사본)
+            "retry_of": retry_of,
             "schema_version": CONFIG_SCHEMA_VERSION,
             "created_at": time.time(),
         }
@@ -226,10 +228,11 @@ def create_run(
         )
 
         db.execute(
-            "INSERT INTO runs (id, name, dataset_id, status, params, options, devices, created_at)"
-            " VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO runs"
+            " (id, name, dataset_id, status, params, options, devices, retry_of, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
             (run_id, name, dataset["id"], "queued", json.dumps(merged, default=str),
-             json.dumps(merged_options, default=str), json.dumps(devices), time.time()),
+             json.dumps(merged_options, default=str), json.dumps(devices), retry_of, time.time()),
         )
     except Exception:
         shutil.rmtree(run_dir, ignore_errors=True)

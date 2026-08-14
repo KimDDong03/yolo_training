@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS presets (
 # 나중에 추가된 컬럼. 이미 만들어진 app.db 를 그대로 열어야 하므로 ALTER 로 채운다.
 MIGRATIONS: list[tuple[str, str, str]] = [
     ("runs", "options", "TEXT NOT NULL DEFAULT '{}'"),
+    # 실패한 run 을 진단해 파라미터를 고쳐 다시 돌렸을 때, 그 원본을 가리킨다.
+    ("runs", "retry_of", "TEXT"),
 ]
 
 
@@ -125,6 +127,8 @@ def row_to_run(row: sqlite3.Row) -> dict[str, Any]:
         "devices": json.loads(row["devices"]),
         "pid": row["pid"],
         "error": row["error"],
+        # options 와 같은 이유로 keys() 를 확인한다 — 이 컬럼이 생기기 전 run 도 읽어야 한다.
+        "retry_of": row["retry_of"] if "retry_of" in row.keys() else None,
         "created_at": row["created_at"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],

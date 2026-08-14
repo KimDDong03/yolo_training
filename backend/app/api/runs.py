@@ -18,7 +18,15 @@ from fastapi import (
 from fastapi.responses import FileResponse
 
 from app.core import db, fsops
-from app.services import event_stream, gpu, models, param_schema, predict, run_manager
+from app.services import (
+    diagnose_fail,
+    event_stream,
+    gpu,
+    models,
+    param_schema,
+    predict,
+    run_manager,
+)
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -74,14 +82,34 @@ def create_run(payload: dict[str, Any]) -> dict[str, Any]:
     if unknown:
         raise HTTPException(422, f"존재하지 않는 GPU 번호입니다: {unknown}")
 
+    retry_of = payload.get("retry_of")
+    if retry_of is not None:
+        if not isinstance(retry_of, str):
+            raise HTTPException(422, "retry_of 는 실행 ID 여야 합니다.")
+        if db.query_one("SELECT id FROM runs WHERE id = ?", (retry_of,)) is None:
+            raise HTTPException(422, "재시도할 원본 실행을 찾을 수 없습니다.")
+
     dataset = db.row_to_dataset(dataset_row)
     name = str(payload.get("name") or f"{dataset['name']}")
     try:
-        run = run_manager.create_run(name, dataset, params, options, devices)
+        run = run_manager.create_run(name, dataset, params, options, devices, retry_of)
     except models.ModelError as exc:
         raise HTTPException(422, str(exc)) from exc
     run_manager.schedule()
     return run
+
+
+@router.get("/{run_id}/diagnosis")
+def run_diagnosis(run_id: str) -> dict[str, Any]:
+    """실패 원인과 처방, 그리고 고친 파라미터로 다시 돌릴 준비물.
+
+    저장하지 않고 매번 계산한다 — 규칙을 개선하면 과거 실패에도 바로 적용된다.
+    """
+    _run_or_404(run_id)
+    try:
+        return diagnose_fail.diagnose(run_id)
+    except run_manager.RunError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @router.post("/{run_id}/stop")
@@ -132,7 +160,7 @@ def run_events(run_id: str) -> dict[str, Any]:
             if not line:
                 continue
             try:
-                events.append(json.loads(line))
+                events.append(event_stream.json_safe(json.loads(line)))
             except json.JSONDecodeError:
                 continue
     return {"events": events}

@@ -9,6 +9,7 @@ model.add_callback() 을 쓰지 않는 이유: 멀티 GPU(DDP)일 때 ultralytic
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import time
@@ -26,8 +27,8 @@ def _rank() -> int:
         return -1
 
 
-def _num(value: Any) -> Any:
-    """torch/numpy 스칼라를 JSON 으로 쓸 수 있는 값으로 바꾼다."""
+def _scalar(value: Any) -> Any:
+    """torch/numpy 스칼라를 파이썬 값으로 바꾼다. non-finite 판정은 하지 않는다."""
     if value is None or isinstance(value, (bool, int, str)):
         return value
     # 학습 중 loss 는 requires_grad=True 인 텐서라 그냥 float() 하면 경고가 뜬다.
@@ -41,6 +42,53 @@ def _num(value: Any) -> Any:
             return float(value.item())
         except Exception:
             return None
+
+
+def _is_nonfinite(value: Any) -> bool:
+    return isinstance(value, float) and not math.isfinite(value)
+
+
+def _num(value: Any) -> Any:
+    """JSON 으로 쓸 수 있는 값으로 바꾼다. NaN/Inf 는 None 으로 떨군다.
+
+    json.dumps 는 기본값(allow_nan=True)으로 NaN 을 그대로 `NaN` 리터럴로 쓴다.
+    파이썬 json.loads 는 그걸 읽지만 브라우저 JSON.parse 는 SyntaxError 로 죽어
+    (api/runs.py 의 send_json → useRunStream 의 onmessage) 스트림 전체가 멎는다.
+    하필 loss 가 발산하는 그 순간에 화면이 통째로 멈추는 것이라, 값을 버리더라도
+    줄은 파싱 가능해야 한다. 버려진 사실은 호출부가 loss_nan / nonfinite 로 남긴다.
+    """
+    value = _scalar(value)
+    return None if _is_nonfinite(value) else value
+
+
+def _nonfinite_keys(values: dict[str, Any]) -> list[str]:
+    """_num 을 거치면 사라질(NaN/Inf 였던) 키를 미리 골라낸다."""
+    return sorted(key for key, value in values.items() if _is_nonfinite(_scalar(value)))
+
+
+def _cuda_mem_gb(trainer: Any) -> float | None:
+    """이 run 이 지금까지 잡아 본 VRAM 최대치(GB). CPU 학습이면 None.
+
+    학습 시작 전에 "얼마나 걸리고 VRAM 이 얼마나 드는지" 를 예측하려면 실측 표본이 있어야
+    하는데, 시간(epoch_time_s)과 달리 VRAM 은 어디에도 남지 않는다. 계측이 예측보다 먼저다.
+    reserved 를 쓰는 이유는 실제로 다른 프로세스가 쓸 수 없는 양이 그쪽이기 때문이다.
+
+    판정 기준은 torch.cuda.is_available() 이 아니라 트레이너가 실제로 쓰는 device 다.
+    GPU 가 꽂힌 PC 에서 CPU 로 학습하면 available 은 True 라, 그걸로 재면 0.0 이 실측값처럼
+    기록되어 나중에 VRAM 추정을 오염시킨다.
+    """
+    device = getattr(trainer, "device", None)
+    # torch.device 면 .type, 문자열이면 "cuda:0" 의 앞부분. 둘 다 받아 둔다 —
+    # 여기서 못 알아보면 GPU run 의 VRAM 이 조용히 안 남고, 그건 나중에야 드러난다.
+    kind = getattr(device, "type", None) or str(device or "").split(":")[0]
+    if kind != "cuda":
+        return None
+    try:
+        import torch
+
+        return round(torch.cuda.max_memory_reserved(device) / 1e9, 3)
+    except Exception:
+        return None
 
 
 def _summarize(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -105,7 +153,9 @@ def on_train_start(trainer) -> None:
     if not writer:
         return
     writer.train_start = time.time()
-    names = getattr(getattr(trainer, "data", None), "get", lambda *_: None)("names") or {}
+    names = (
+        getattr(getattr(trainer, "data", None), "get", lambda *_: None)("names") or {}
+    )
     writer.write(
         {
             "t": "start",
@@ -115,7 +165,9 @@ def on_train_start(trainer) -> None:
             "batch": getattr(trainer.args, "batch", None),
             "device": str(getattr(trainer, "device", "")),
             "save_dir": str(getattr(trainer, "save_dir", "")),
-            "classes": [str(v) for v in (names.values() if hasattr(names, "values") else names)],
+            "classes": [
+                str(v) for v in (names.values() if hasattr(names, "values") else names)
+            ],
         }
     )
 
@@ -138,15 +190,17 @@ def on_train_batch_end(trainer) -> None:
             total = len(loader) if loader is not None else None
         except TypeError:
             total = None
-        writer.write(
-            {
-                "t": "batch",
-                "epoch": epoch,
-                "i": writer.batch_count,
-                "n": total,
-                "loss": _num(getattr(trainer, "loss", None)),
-            }
-        )
+        loss = _scalar(getattr(trainer, "loss", None))
+        payload = {
+            "t": "batch",
+            "epoch": epoch,
+            "i": writer.batch_count,
+            "n": total,
+            "loss": None if _is_nonfinite(loss) else loss,
+        }
+        if _is_nonfinite(loss):
+            payload["loss_nan"] = True
+        writer.write(payload)
 
     # 단일 GPU 에서만 배치 경계에서 즉시 멈춘다.
     # DDP 에서 rank 0 만 break 하면 다른 rank 가 collective 에서 멈춰 데드락이 된다
@@ -167,6 +221,7 @@ def on_fit_epoch_end(trainer) -> None:
         pass
     for key, value in (getattr(trainer, "metrics", None) or {}).items():
         metrics[key] = value
+    nonfinite = _nonfinite_keys(metrics)
     metrics = {k: _num(v) for k, v in metrics.items()}
 
     epoch = int(getattr(trainer, "epoch", 0)) + 1
@@ -177,20 +232,22 @@ def on_fit_epoch_end(trainer) -> None:
     # 같은 에폭 번호로 두 번 찍히면 차트에 점이 겹치므로 별도 종류로 남긴다.
     kind = "epoch" if epoch != writer.last_epoch_emitted else "final_val"
     writer.last_epoch_emitted = epoch
-    writer.write(
-        {
-            "t": kind,
-            "epoch": epoch,
-            "total_epochs": total,
-            "metrics": metrics,
-            "summary": _summarize(metrics),
-            "lr": {k: _num(v) for k, v in (getattr(trainer, "lr", None) or {}).items()},
-            "fitness": _num(getattr(trainer, "fitness", None)),
-            "best_fitness": _num(getattr(trainer, "best_fitness", None)),
-            "epoch_time_s": epoch_time,
-            "eta_s": epoch_time * max(total - epoch, 0),
-        }
-    )
+    payload = {
+        "t": kind,
+        "epoch": epoch,
+        "total_epochs": total,
+        "metrics": metrics,
+        "summary": _summarize(metrics),
+        "lr": {k: _num(v) for k, v in (getattr(trainer, "lr", None) or {}).items()},
+        "fitness": _num(getattr(trainer, "fitness", None)),
+        "best_fitness": _num(getattr(trainer, "best_fitness", None)),
+        "epoch_time_s": epoch_time,
+        "eta_s": epoch_time * max(total - epoch, 0),
+        "mem_gb": _cuda_mem_gb(trainer),
+    }
+    if nonfinite:
+        payload["nonfinite"] = nonfinite
+    writer.write(payload)
 
     _copy_epoch_images(writer, trainer, epoch)
 
@@ -233,7 +290,9 @@ def _copy_epoch_images(writer: EventWriter, trainer, epoch: int) -> None:
                 continue
             files.append(dst.relative_to(writer.run_dir).as_posix())
     if files:
-        writer.write({"t": "artifact", "kind": "val_pred", "epoch": epoch, "files": files})
+        writer.write(
+            {"t": "artifact", "kind": "val_pred", "epoch": epoch, "files": files}
+        )
 
 
 def on_model_save(trainer) -> None:
@@ -331,7 +390,9 @@ def install() -> bool:
     _set_in_memory(SETTINGS, "sync", False)
     # TensorBoard 는 UI 옵션이다. 통합 콜백이 로드되기 전인 지금 반영해야 하고,
     # sitecustomize 를 통해 DDP 자식 프로세스에서도 같은 코드가 돈다.
-    _set_in_memory(SETTINGS, "tensorboard", os.environ.get("YOLOWEB_TENSORBOARD") == "1")
+    _set_in_memory(
+        SETTINGS, "tensorboard", os.environ.get("YOLOWEB_TENSORBOARD") == "1"
+    )
 
     hooks = {
         "on_train_start": on_train_start,

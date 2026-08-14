@@ -122,6 +122,24 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ## 문제 해결
 
+**"Python 3 을 찾지 못했다" — 분명히 Python 은 깔려 있는데**
+
+Python 이 PATH 에 없거나, PATH 의 `python` 이 Microsoft Store 로 넘기는 껍데기라서 그렇다.
+설치 경로를 직접 지정하면 된다.
+
+```powershell
+.\scripts\setup.ps1 -PythonPath "C:\Users\<사용자>\AppData\Local\Programs\Python\Python311\python.exe"
+```
+
+설치 위치를 모르면 찾아본다:
+
+```powershell
+Get-ChildItem C:\ -Recurse -Filter python.exe -ErrorAction SilentlyContinue | Select-Object -First 5 FullName
+```
+
+`setup.ps1` 은 실패할 때 시도한 후보를 전부 출력하므로 그 목록도 참고가 된다.
+(자동 탐색은 `py` 런처 → PATH → 레지스트리 → 흔한 설치 폴더 순으로 본다.)
+
 **모델 드롭다운이 비어 있다 / 전부 `(미반입)` 이다**
 가중치를 못 받았다. `.\.venv\Scripts\python.exe scripts\fetch_weights.py` 를 다시 돌린다.
 회사망 프록시로 막히면, 스크립트가 출력하는 URL 로 직접 받아 `bundle/weights/` 에 넣으면 된다.

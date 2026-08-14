@@ -13,11 +13,16 @@
 .EXAMPLE
     .\scripts\setup.ps1 -SkipFrontend
     프론트엔드를 다시 빌드하지 않는다. 저장소에 커밋된 frontend/dist 를 그대로 쓴다.
+
+.EXAMPLE
+    .\scripts\setup.ps1 -PythonPath "C:\Python311\python.exe"
+    Python 을 자동으로 못 찾을 때 직접 지정한다.
 #>
 [CmdletBinding()]
 param(
     [switch]$Cpu,
-    [switch]$SkipFrontend
+    [switch]$SkipFrontend,
+    [string]$PythonPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,29 +48,121 @@ Write-Host "설치 위치: $Root"
 # --- 1. Python 확인 -----------------------------------------------------------
 Write-Step 'Python 확인'
 
-$PythonCmd = $null
-$PythonArgs = @()
+# 후보를 --version 이 아니라 실제 코드 실행으로 검증한다.
+# Microsoft Store 스텁(WindowsApps\python.exe)은 --version 에도 반응하는 척하다가
+# 실제로는 스토어 창만 띄우므로, sys.executable 을 찍게 해서 걸러낸다.
+function Test-PythonCandidate {
+    param([string]$Exe, [string[]]$PreArgs = @())
 
-foreach ($candidate in @(@('py', @('-3.11')), @('py', @('-3')), @('python', @()))) {
-    $exe = $candidate[0]
-    $exeArgs = $candidate[1]
-    if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
+    if (-not $Exe) { return $null }
+    try {
+        $out = & $Exe @PreArgs -c "import sys; print('PYOK', sys.version_info.major, sys.version_info.minor, sys.executable)" 2>$null
+    } catch {
+        return $null
+    }
+    if ($LASTEXITCODE -ne 0) { return $null }
 
-    $version = & $exe @exeArgs --version 2>&1
-    if ($LASTEXITCODE -ne 0) { continue }
+    $line = $out | Where-Object { $_ -like 'PYOK *' } | Select-Object -First 1
+    if (-not $line) { return $null }
 
-    Write-Host "  $exe $exeArgs -> $version"
-    $PythonCmd = $exe
-    $PythonArgs = $exeArgs
-    break
+    $parts = $line -split ' ', 4
+    return [pscustomobject]@{
+        Exe     = $Exe
+        PreArgs = $PreArgs
+        Major   = [int]$parts[1]
+        Minor   = [int]$parts[2]
+        Path    = $parts[3]
+        Label   = "$Exe $($PreArgs -join ' ')".Trim()
+    }
 }
 
-if (-not $PythonCmd) {
+$tried = New-Object System.Collections.Generic.List[string]
+$found = New-Object System.Collections.Generic.List[object]
+
+function Add-Candidate {
+    param([string]$Exe, [string[]]$PreArgs = @())
+    $label = "$Exe $($PreArgs -join ' ')".Trim()
+    if ($tried.Contains($label)) { return }
+    $tried.Add($label) | Out-Null
+    $result = Test-PythonCandidate -Exe $Exe -PreArgs $PreArgs
+    if ($result) { $found.Add($result) | Out-Null }
+}
+
+if ($PythonPath) {
+    Add-Candidate -Exe $PythonPath
+    if ($found.Count -eq 0) {
+        Write-Host ''
+        Write-Host "-PythonPath 로 지정한 경로가 동작하지 않는다: $PythonPath" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    # 1) py 런처 (python.org 설치본이면 보통 있다)
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        foreach ($v in @('-3.11', '-3.12', '-3.13', '-3.10', '-3')) {
+            Add-Candidate -Exe 'py' -PreArgs @($v)
+        }
+    }
+
+    # 2) PATH 위의 python (Store 스텁은 위 함수가 걸러낸다)
+    foreach ($name in @('python', 'python3')) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue |
+               Where-Object { $_.Source -and $_.Source -notmatch 'WindowsApps' } |
+               Select-Object -First 1
+        if ($cmd) { Add-Candidate -Exe $cmd.Source }
+    }
+
+    # 3) 레지스트리에 등록된 설치본 (PATH 에 안 넣고 설치한 경우)
+    foreach ($hive in @('HKLM:\SOFTWARE\Python\PythonCore', 'HKCU:\SOFTWARE\Python\PythonCore')) {
+        if (-not (Test-Path $hive)) { continue }
+        foreach ($key in Get-ChildItem $hive -ErrorAction SilentlyContinue) {
+            $installPath = (Get-ItemProperty "$($key.PSPath)\InstallPath" -ErrorAction SilentlyContinue).'(default)'
+            if ($installPath) { Add-Candidate -Exe (Join-Path $installPath 'python.exe') }
+        }
+    }
+
+    # 4) 흔한 설치 위치 직접 탐색
+    $roots = @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python'),
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)},
+        'C:\'
+    ) | Where-Object { $_ -and (Test-Path $_) }
+
+    foreach ($root in $roots) {
+        foreach ($dir in Get-ChildItem $root -Directory -Filter 'Python3*' -ErrorAction SilentlyContinue) {
+            Add-Candidate -Exe (Join-Path $dir.FullName 'python.exe')
+        }
+    }
+}
+
+# 3.10 ~ 3.13 을 우선하고, 그 안에서는 3.11 을 가장 선호한다.
+$usable = $found | Where-Object { $_.Major -eq 3 -and $_.Minor -ge 9 }
+
+if (-not $usable) {
     Write-Host ''
-    Write-Host 'Python 을 찾지 못했다. Python 3.11 을 설치해라:' -ForegroundColor Red
-    Write-Host '  https://www.python.org/downloads/release/python-3119/'
-    Write-Host '  설치할 때 "Add python.exe to PATH" 를 반드시 체크한다.'
+    Write-Host 'Python 3 을 찾지 못했다.' -ForegroundColor Red
+    Write-Host ''
+    Write-Host '시도한 것:'
+    foreach ($t in $tried) { Write-Host "  - $t" }
+    Write-Host ''
+    Write-Host '해결 방법 두 가지:'
+    Write-Host '  1) 이미 설치돼 있다면 경로를 직접 지정한다:' -ForegroundColor Yellow
+    Write-Host '     .\scripts\setup.ps1 -PythonPath "C:\경로\python.exe"'
+    Write-Host '     설치 위치를 모르면 PowerShell 에서:'
+    Write-Host '       Get-ChildItem C:\ -Recurse -Filter python.exe -ErrorAction SilentlyContinue | Select-Object -First 5 FullName'
+    Write-Host ''
+    Write-Host '  2) 새로 설치한다 (설치할 때 "Add python.exe to PATH" 체크):' -ForegroundColor Yellow
+    Write-Host '     https://www.python.org/downloads/release/python-3119/'
     exit 1
+}
+
+$best = $usable | Sort-Object @{ Expression = { if ($_.Minor -eq 11) { 0 } elseif ($_.Minor -in 10, 12, 13) { 1 } else { 2 } } } | Select-Object -First 1
+
+$PythonCmd = $best.Exe
+$PythonArgs = $best.PreArgs
+Write-Host "  찾음: Python $($best.Major).$($best.Minor) — $($best.Path)"
+if ($best.Minor -lt 10 -or $best.Minor -gt 13) {
+    Write-Host "  경고: 3.10~3.13 에서 검증했다. 이 버전은 torch 휠이 없을 수 있다." -ForegroundColor Yellow
 }
 
 # --- 2. 가상환경 --------------------------------------------------------------

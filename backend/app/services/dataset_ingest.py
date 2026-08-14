@@ -33,8 +33,19 @@ SPLIT_ALIASES = {
     "validation": "val",
     "test": "test",
 }
-# 이보다 크면 상세 리포트(빈 라벨 목록 등) 수집을 생략한다. 클래스 집계는 항상 전수로 한다.
-FULL_VERIFY_LIMIT = 20_000
+# 카테고리별로 review.json 에 남길 최대 항목 수. 넘으면 total/truncated 로 잘렸음을 알린다.
+REVIEW_CAP = 2_000
+
+# 안정된 카테고리 코드 → 화면 표시명. 코드가 필터의 키다(한글 문장을 키로 쓰면 안 된다).
+ISSUE_CATEGORIES: dict[str, str] = {
+    "missing_label": "라벨 없는 이미지",
+    "empty_label": "빈 라벨",
+    "coord_out_of_range": "좌표가 0~1 밖",
+    "box_out_of_image": "박스가 이미지 밖으로",
+    "invalid_class": "잘못된 클래스 번호",
+    "malformed_line": "형식이 깨진 줄",
+    "orphan_label": "이미지 없는 라벨",
+}
 
 
 class IngestError(Exception):
@@ -173,14 +184,20 @@ def _read_classes_txt(root: Path) -> list[str] | None:
     return None
 
 
-def _parse_label(path: Path) -> tuple[list[int], list[str]]:
-    """라벨 파일에서 클래스 인덱스 목록과 문제 메시지를 뽑는다."""
+def _parse_label(path: Path) -> tuple[list[int], list[tuple[float, float, float, float]], list[dict[str, Any]]]:
+    """라벨 파일을 파싱한다.
+
+    Returns:
+        (클래스 인덱스, 박스(cx,cy,w,h), 문제 목록)
+        문제는 `code` 로 분류한다 — 한글 문장을 필터 키로 쓰면 화면에서 카테고리를 만들 수 없다.
+    """
     class_ids: list[int] = []
-    issues: list[str] = []
+    boxes: list[tuple[float, float, float, float]] = []
+    issues: list[dict[str, Any]] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
-        return [], [f"읽기 실패: {exc}"]
+        return [], [], [{"code": "unreadable", "line": 0, "detail": f"읽기 실패: {exc}"}]
 
     for lineno, line in enumerate(text.splitlines(), 1):
         line = line.strip()
@@ -188,26 +205,36 @@ def _parse_label(path: Path) -> tuple[list[int], list[str]]:
             continue
         parts = line.split()
         if len(parts) < 5:
-            issues.append(f"{lineno}행: 항목이 5개 미만")
+            issues.append({"code": "malformed_line", "line": lineno, "detail": "항목이 5개 미만"})
             continue
         try:
             # int(float(...)) 로 파싱하면 "1.9" 가 조용히 클래스 1이 되고 "inf" 는 OverflowError 를 던진다.
             cid = int(parts[0])
             coords = [float(v) for v in parts[1:]]
         except (ValueError, OverflowError):
-            issues.append(f"{lineno}행: 숫자로 해석할 수 없음")
+            issues.append({"code": "malformed_line", "line": lineno, "detail": "숫자로 해석할 수 없음"})
             continue
         if cid < 0:
-            issues.append(f"{lineno}행: 클래스 인덱스가 음수")
+            issues.append({"code": "invalid_class", "line": lineno, "detail": f"클래스 인덱스가 음수 ({cid})"})
             continue
         # nan 은 모든 크기 비교가 거짓이라 범위 검사만으로는 통과해버린다.
         if not all(math.isfinite(v) for v in coords):
-            issues.append(f"{lineno}행: 좌표에 nan/inf 가 있음")
+            issues.append({"code": "malformed_line", "line": lineno, "detail": "좌표에 nan/inf 가 있음"})
             continue
+
         if any(v < -0.001 or v > 1.001 for v in coords):
-            issues.append(f"{lineno}행: 좌표가 0~1 범위를 벗어남")
+            # 값 자체가 정규화 범위를 벗어난 경우
+            issues.append({"code": "coord_out_of_range", "line": lineno, "detail": "좌표가 0~1 범위를 벗어남"})
+        elif len(coords) >= 4:
+            cx, cy, w, h = coords[0], coords[1], coords[2], coords[3]
+            # 값은 0~1 안이지만 박스가 이미지 밖으로 삐져나가는 경우 — 위와 다른 문제다
+            if cx - w / 2 < -0.01 or cx + w / 2 > 1.01 or cy - h / 2 < -0.01 or cy + h / 2 > 1.01:
+                issues.append({"code": "box_out_of_image", "line": lineno, "detail": "박스가 이미지 밖으로 나감"})
+
+        if len(coords) >= 4:
+            boxes.append((coords[0], coords[1], coords[2], coords[3]))
         class_ids.append(cid)
-    return class_ids, issues
+    return class_ids, boxes, issues
 
 
 def scan(root: Path) -> dict[str, Any]:
@@ -218,60 +245,154 @@ def scan(root: Path) -> dict[str, Any]:
 
     splits: dict[str, list[Path]] = {"train": [], "val": [], "test": [], "unassigned": []}
     class_counts: dict[int, int] = {}
-    missing_labels: list[str] = []
-    empty_labels: list[str] = []
-    label_issues: list[dict[str, Any]] = []
     max_class = -1
+
+    # 카테고리별 이미지 목록. 저장은 상한을 두되 total 은 정확히 센다 —
+    # 잘린 걸 숨기면 "다 봤다"는 착각을 준다.
+    buckets: dict[str, list[dict[str, Any]]] = {c: [] for c in ISSUE_CATEGORIES}
+    totals: dict[str, int] = {c: 0 for c in ISSUE_CATEGORIES}
+
+    areas: list[float] = []
+    aspects: list[float] = []
+
+    def record(code: str, rel: str, detail: str = "") -> None:
+        totals[code] += 1
+        if len(buckets[code]) < REVIEW_CAP:
+            buckets[code].append({"path": rel, "detail": detail})
 
     # 라벨은 항상 전부 읽는다. 건너뛰면 클래스 개수를 알 수 없어 data.yaml 이 틀리게 생성된다
     # (yaml/classes.txt 가 없는 데이터셋은 라벨의 최대 인덱스가 유일한 근거다).
-    # 큰 데이터셋에서는 문제 목록 수집만 상한을 둔다.
-    detailed = len(images) <= FULL_VERIFY_LIMIT
     for image in images:
         splits[_split_of(image, root) or "unassigned"].append(image)
+        rel = image.relative_to(root).as_posix()
 
         label = _label_for(image)
         if not label.exists():
-            if len(missing_labels) < 50:
-                missing_labels.append(str(image.relative_to(root)))
+            record("missing_label", rel)
             continue
-        ids, issues = _parse_label(label)
-        if not ids and not issues and detailed and len(empty_labels) < 50:
-            empty_labels.append(str(image.relative_to(root)))
+
+        ids, boxes, issues = _parse_label(label)
+        if not ids and not issues:
+            record("empty_label", rel)
         for cid in ids:
             class_counts[cid] = class_counts.get(cid, 0) + 1
             max_class = max(max_class, cid)
-        if issues and len(label_issues) < 50:
-            label_issues.append({"file": str(label.relative_to(root)), "issues": issues[:5]})
+        for _, _, w, h in boxes:
+            if w > 0 and h > 0:
+                areas.append(w * h)
+                aspects.append(w / h)
+
+        seen_codes: set[str] = set()
+        for issue in issues:
+            code = issue["code"]
+            if code in seen_codes or code not in buckets:
+                continue
+            seen_codes.add(code)
+            record(code, rel, f"{issue['line']}행: {issue['detail']}")
 
     # 라벨만 있고 이미지가 없는 경우
-    orphan_labels: list[str] = []
     image_stems = {p.with_suffix("").as_posix() for p in images}
     for label in root.rglob("*.txt"):
         if label.name.lower() in {"classes.txt", "names.txt", "obj.names", "train.txt", "val.txt"}:
             continue
         stem = label.with_suffix("").as_posix().replace("/labels/", "/images/")
         if stem not in image_stems and label.with_suffix("").as_posix() not in image_stems:
-            if len(orphan_labels) < 50:
-                orphan_labels.append(str(label.relative_to(root)))
+            record("orphan_label", label.relative_to(root).as_posix())
+
+    categories = {
+        code: {
+            "code": code,
+            "label": ISSUE_CATEGORIES[code],
+            "total": totals[code],
+            "stored": len(buckets[code]),
+            "truncated": totals[code] > len(buckets[code]),
+            "items": buckets[code],
+        }
+        for code in ISSUE_CATEGORIES
+    }
 
     return {
         "images": images,
         "splits": splits,
         "class_counts": class_counts,
         "max_class": max_class,
-        "detailed_report": detailed,
+        "categories": categories,
+        "box_stats": _box_stats(areas, aspects),
         "report": {
             "total_images": len(images),
             "split_counts": {k: len(v) for k, v in splits.items()},
-            "missing_labels": missing_labels,
-            "missing_label_shown": len(missing_labels),
-            "empty_labels": empty_labels,
-            "orphan_labels": orphan_labels,
-            "label_issues": label_issues,
-            "detailed_report": detailed,
+            "issue_counts": {code: totals[code] for code in ISSUE_CATEGORIES},
+            "review_cap": REVIEW_CAP,
         },
     }
+
+
+def _box_stats(areas: list[float], aspects: list[float]) -> dict[str, Any]:
+    """박스 크기·종횡비 분포.
+
+    작은 객체가 대부분인데 imgsz 를 작게 잡으면 아예 안 잡힌다 —
+    파라미터를 고르기 전에 알아야 하는 정보라 등록 단계에서 미리 계산해 둔다.
+    """
+    if not areas:
+        return {"count": 0, "area": [], "aspect": [], "tiny_ratio": 0.0}
+
+    area_edges = [0.0, 0.0005, 0.002, 0.01, 0.05, 0.2, 1.01]
+    area_labels = ["<0.05%", "0.05~0.2%", "0.2~1%", "1~5%", "5~20%", ">20%"]
+    aspect_edges = [0.0, 0.5, 0.8, 1.25, 2.0, float("inf")]
+    aspect_labels = ["세로로 김", "약간 세로", "정사각형", "약간 가로", "가로로 김"]
+
+    def histogram(values: list[float], edges: list[float], labels: list[str]) -> list[dict[str, Any]]:
+        counts = [0] * len(labels)
+        for value in values:
+            for i in range(len(labels)):
+                if edges[i] <= value < edges[i + 1]:
+                    counts[i] += 1
+                    break
+        return [{"label": labels[i], "count": counts[i]} for i in range(len(labels))]
+
+    tiny = sum(1 for a in areas if a < 0.002)
+    return {
+        "count": len(areas),
+        "area": histogram(areas, area_edges, area_labels),
+        "aspect": histogram(aspects, aspect_edges, aspect_labels),
+        "tiny_ratio": round(tiny / len(areas), 4),
+        "median_area": round(sorted(areas)[len(areas) // 2], 6),
+    }
+
+
+# ------------------------------------------------------------------- 검수 리포트
+
+
+def review_path(dataset_dir: Path) -> Path:
+    return dataset_dir / "review.json"
+
+
+def write_review(dataset_dir: Path, info: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "root": str(info.get("root", "")),
+        "total_images": len(info["images"]),
+        "categories": info["categories"],
+        "box_stats": info["box_stats"],
+        "review_cap": REVIEW_CAP,
+    }
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    review_path(dataset_dir).write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+    return payload
+
+
+def load_review(dataset_dir: Path, root: Path) -> dict[str, Any]:
+    """검수 리포트를 읽는다. 없으면(이전 버전에서 등록된 데이터셋) 그 자리에서 다시 만든다."""
+    path = review_path(dataset_dir)
+    if path.is_file():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    info = scan(root)
+    info["root"] = str(root)
+    return write_review(dataset_dir, info)
 
 
 # --------------------------------------------------------------------- 등록
@@ -362,8 +483,12 @@ def build_dataset(
             "val_count": len(val),
             "class_instances": {names[cid] if cid < len(names) else f"class_{cid}": n
                                 for cid, n in sorted(info["class_counts"].items())},
+            "box_stats": info["box_stats"],
         }
     )
+
+    # 문제 이미지 목록은 메타와 분리해 둔다. 카테고리마다 최대 2,000건이라 meta.json 에 넣기엔 크다.
+    write_review(dataset_dir, info)
 
     meta = {
         "id": dataset_dir.name,

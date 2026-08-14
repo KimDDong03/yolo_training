@@ -1,4 +1,84 @@
-export type ParamType = 'int' | 'float' | 'bool' | 'enum' | 'str'
+export type ParamType = 'int' | 'float' | 'bool' | 'enum' | 'str' | 'path'
+
+export interface WeightCandidate {
+  value: string
+  label: string
+  detail: string
+  kind: 'weights' | 'config'
+}
+
+export interface ModelCheck {
+  ok: boolean
+  kind: 'weights' | 'config' | 'unknown'
+  resolved: string | null
+  message: string
+}
+
+export interface Preset {
+  name: string
+  params: Record<string, unknown>
+  options: Record<string, unknown>
+  created_at: number | null
+  builtin: boolean
+}
+
+export interface ReviewCategory {
+  code: string
+  label: string
+  total: number
+  stored: number
+  truncated: boolean
+}
+
+export interface BoxStats {
+  count: number
+  area: { label: string; count: number }[]
+  aspect: { label: string; count: number }[]
+  tiny_ratio: number
+  median_area?: number
+}
+
+export interface DatasetReview {
+  categories: ReviewCategory[]
+  box_stats: BoxStats
+  review_cap: number
+  category: string
+  page: {
+    items: { path: string; detail: string }[]
+    total: number
+    stored: number
+    truncated: boolean
+  }
+}
+
+export interface ExportStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed'
+  events: { t: string; [k: string]: unknown }[]
+  result: { status?: string; file?: string; size_mb?: number; error?: string } | null
+  format: string | null
+}
+
+export interface Detection {
+  cls: number
+  name: string
+  conf: number
+  xyxy: [number, number, number, number]
+}
+
+export interface PredictResult {
+  image: string
+  detections: Detection[]
+  count: number
+  elapsed_ms: number
+  weights: string
+  device: string
+}
+
+export interface SystemInfo {
+  tensorboard: boolean
+  tensorrt: boolean
+  onnx: boolean
+}
 
 export interface Choice {
   value: string
@@ -18,6 +98,8 @@ export interface ParamField {
   step: number | null
   choices: Choice[] | null
   help: string
+  /** params = ultralytics 학습 인자, options = UI 전용 값. 서버가 이 기준으로 나눠 검증한다. */
+  scope: 'params' | 'options'
 }
 
 export interface ParamSchema {
@@ -41,11 +123,10 @@ export interface DatasetReport {
   val_ratio?: number | null
   split_counts: Record<string, number>
   class_instances?: Record<string, number>
-  missing_labels: string[]
-  empty_labels: string[]
-  orphan_labels: string[]
-  label_issues: { file: string; issues: string[] }[]
-  detailed_report: boolean
+  /** 카테고리 코드 → 건수. 목록 자체는 review.json 에 따로 있다(GET /api/datasets/{id}/review). */
+  issue_counts: Record<string, number>
+  box_stats?: BoxStats
+  review_cap: number
 }
 
 export interface Dataset {
@@ -68,6 +149,8 @@ export interface Run {
   dataset_id: string
   status: RunStatus
   params: Record<string, unknown>
+  /** UI 전용 값. 이 컬럼이 생기기 전 run 은 빈 객체로 온다. */
+  options: Record<string, unknown>
   devices: number[]
   pid: number | null
   error: string | null

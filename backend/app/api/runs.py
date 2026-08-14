@@ -8,11 +8,19 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse
 
 from app.core import db
-from app.services import event_stream, gpu, run_manager
+from app.services import event_stream, gpu, models, param_schema, predict, run_manager
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -26,7 +34,10 @@ def _run_or_404(run_id: str) -> dict[str, Any]:
 
 @router.get("")
 def list_runs() -> list[dict[str, Any]]:
-    return [db.row_to_run(r) for r in db.query("SELECT * FROM runs ORDER BY created_at DESC")]
+    return [
+        db.row_to_run(r)
+        for r in db.query("SELECT * FROM runs ORDER BY created_at DESC")
+    ]
 
 
 @router.get("/{run_id}")
@@ -39,19 +50,18 @@ def get_run(run_id: str) -> dict[str, Any]:
 
 @router.post("")
 def create_run(payload: dict[str, Any]) -> dict[str, Any]:
-    dataset_row = db.query_one("SELECT * FROM datasets WHERE id = ?", (payload.get("dataset_id"),))
+    dataset_row = db.query_one(
+        "SELECT * FROM datasets WHERE id = ?", (payload.get("dataset_id"),)
+    )
     if dataset_row is None:
         raise HTTPException(422, "데이터셋을 찾을 수 없습니다.")
 
-    params = payload.get("params") or {}
-    if not isinstance(params, dict):
-        raise HTTPException(422, "params 는 객체여야 합니다.")
+    # 스키마 allowlist 로 걸러낸다. 이게 없으면 임의 키가 그대로 model.train(**params) 로 들어간다.
     try:
-        epochs = int(params.get("epochs", 100))
-    except (TypeError, ValueError):
-        raise HTTPException(422, "epochs 가 숫자가 아닙니다.") from None
-    if epochs < 1:
-        raise HTTPException(422, "epochs 는 1 이상이어야 합니다.")
+        params = param_schema.validate(payload.get("params"), "params")
+        options = param_schema.validate(payload.get("options"), "options")
+    except param_schema.ValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
     devices = payload.get("devices")
     if devices is None:
@@ -68,7 +78,10 @@ def create_run(payload: dict[str, Any]) -> dict[str, Any]:
 
     dataset = db.row_to_dataset(dataset_row)
     name = str(payload.get("name") or f"{dataset['name']}")
-    run = run_manager.create_run(name, dataset, params, devices)
+    try:
+        run = run_manager.create_run(name, dataset, params, options, devices)
+    except models.ModelError as exc:
+        raise HTTPException(422, str(exc)) from exc
     run_manager.schedule()
     return run
 
@@ -87,7 +100,12 @@ def stop_run(run_id: str, mode: str = "graceful") -> dict[str, Any]:
 def delete_run(run_id: str) -> dict[str, str]:
     run = _run_or_404(run_id)
     if run["status"] in {"running", "queued"}:
-        raise HTTPException(409, "진행 중인 학습은 삭제할 수 없습니다. 먼저 정지하세요.")
+        raise HTTPException(
+            409, "진행 중인 학습은 삭제할 수 없습니다. 먼저 정지하세요."
+        )
+    if run_manager.export_alive(run_id):
+        # 폴더를 지워도 내보내기 프로세스는 계속 돌면서 GPU 를 물고 있다.
+        raise HTTPException(409, "내보내는 중입니다. 끝난 뒤에 삭제하세요.")
     shutil.rmtree(run_manager.run_dir_for(run_id), ignore_errors=True)
     db.execute("DELETE FROM runs WHERE id = ?", (run_id,))
     return {"status": "deleted", "id": run_id}
@@ -121,7 +139,75 @@ def run_file(run_id: str, path: str) -> FileResponse:
         raise HTTPException(403, "실행 폴더 밖의 파일은 열 수 없습니다.")
     if not target.is_file():
         raise HTTPException(404, "파일을 찾을 수 없습니다.")
-    return FileResponse(target, filename=target.name if target.suffix == ".pt" else None)
+    return FileResponse(
+        target, filename=target.name if target.suffix == ".pt" else None
+    )
+
+
+@router.post("/{run_id}/predict")
+async def run_predict(
+    run_id: str,
+    file: UploadFile = File(...),
+    weights: str = Form("train/weights/best.pt"),
+    conf: float = Form(0.25),
+    iou: float = Form(0.7),
+    imgsz: int = Form(640),
+) -> dict[str, Any]:
+    """학습된 가중치로 올린 이미지에 추론한다. 항상 CPU 로 돈다(predict.py 주석 참고)."""
+    _run_or_404(run_id)
+    root = run_manager.run_dir_for(run_id).resolve()
+    target = (root / weights).resolve()
+    if root not in target.parents:
+        raise HTTPException(403, "실행 폴더 밖의 가중치는 쓸 수 없습니다.")
+
+    payload = await file.read(predict.MAX_UPLOAD_BYTES + 1)
+    try:
+        return predict.run(root, target, payload, conf=conf, iou=iou, imgsz=imgsz)
+    except predict.PredictError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/{run_id}/export")
+def start_export(run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """가중치를 다른 포맷으로 변환한다. 오래 걸리므로 별도 프로세스로 띄우고 폴링으로 확인한다."""
+    _run_or_404(run_id)
+    fmt = str(payload.get("format", "onnx"))
+    if fmt not in {"onnx", "torchscript", "engine"}:
+        raise HTTPException(422, f"지원하지 않는 포맷입니다: {fmt}")
+    try:
+        return run_manager.start_export(
+            run_id,
+            fmt,
+            str(payload.get("weights", "train/weights/best.pt")),
+            imgsz=int(payload.get("imgsz", 640)),
+            half=bool(payload.get("half", False)),
+            dynamic=bool(payload.get("dynamic", False)),
+        )
+    except run_manager.RunError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/{run_id}/export")
+def export_status(run_id: str) -> dict[str, Any]:
+    _run_or_404(run_id)
+    return run_manager.export_status(run_id)
+
+
+@router.get("/{run_id}/weights")
+def run_weights(run_id: str) -> dict[str, Any]:
+    """추론에 쓸 수 있는 이 run 의 가중치 목록."""
+    _run_or_404(run_id)
+    root = run_manager.run_dir_for(run_id)
+    items: list[dict[str, Any]] = []
+    for path in sorted((root / "train" / "weights").glob("*.pt")):
+        items.append(
+            {
+                "value": path.relative_to(root).as_posix(),
+                "label": path.stem,
+                "size_mb": round(path.stat().st_size / 1024**2, 1),
+            }
+        )
+    return {"weights": items}
 
 
 @router.get("/{run_id}/artifacts")
@@ -143,9 +229,13 @@ def run_artifacts(run_id: str) -> dict[str, Any]:
     epochs: dict[str, list[str]] = {}
     epochs_dir = root / "epochs"
     if epochs_dir.is_dir():
-        for folder in sorted(epochs_dir.iterdir(), key=lambda p: int(p.name) if p.name.isdigit() else 0):
+        for folder in sorted(
+            epochs_dir.iterdir(), key=lambda p: int(p.name) if p.name.isdigit() else 0
+        ):
             if folder.is_dir():
-                epochs[folder.name] = [f.relative_to(root).as_posix() for f in sorted(folder.glob("*.jpg"))]
+                epochs[folder.name] = [
+                    f.relative_to(root).as_posix() for f in sorted(folder.glob("*.jpg"))
+                ]
     return {"plots": plots, "weights": weights, "epochs": epochs}
 
 

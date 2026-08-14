@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from './api'
 import { LossChart, MetricsChart } from './components/Charts'
+import { CompareView } from './components/CompareView'
 import { LogView } from './components/LogView'
 import { NewRunPanel } from './components/NewRunPanel'
 import { PreviewPanel } from './components/PreviewPanel'
@@ -14,6 +15,7 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null)
   const [detail, setDetail] = useState<Run | null>(null)
   const [error, setError] = useState('')
+  const [compare, setCompare] = useState<string[]>([])
 
   const refreshRuns = useCallback(() => api.runs().then(setRuns).catch(() => {}), [])
   const refreshDatasets = useCallback(() => api.datasets().then(setDatasets).catch(() => {}), [])
@@ -141,18 +143,36 @@ export default function App() {
             </div>
           ) : (
             <div className="pane">
+              <CompareView runIds={compare} />
+
               <div className="card">
-                <h3>실행 기록</h3>
+                <h3 className="row" style={{ gap: 8 }}>
+                  실행 기록
+                  {compare.length > 0 && (
+                    <button style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px' }} onClick={() => setCompare([])}>
+                      비교 선택 해제 ({compare.length})
+                    </button>
+                  )}
+                </h3>
                 {runs.length === 0 ? (
                   <p className="muted small">아직 학습 기록이 없습니다. 왼쪽에서 데이터셋을 등록하고 시작하세요.</p>
                 ) : (
                   <table>
                     <thead>
-                      <tr><th>이름</th><th>상태</th><th>GPU</th><th>시작</th><th></th></tr>
+                      <tr><th title="비교할 실행 선택">비교</th><th>이름</th><th>상태</th><th>GPU</th><th>시작</th><th></th></tr>
                     </thead>
                     <tbody>
                       {runs.map((r) => (
                         <tr key={r.id}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={compare.includes(r.id)}
+                              onChange={(e) =>
+                                setCompare((c) => (e.target.checked ? [...c, r.id] : c.filter((x) => x !== r.id)))
+                              }
+                            />
+                          </td>
                           <td style={{ cursor: 'pointer' }} onClick={() => setSelected(r.id)}>{r.name}</td>
                           <td><span className={`badge ${r.status}`}>{statusLabel(r.status)}</span></td>
                           <td>{r.devices.length ? r.devices.join(',') : 'cpu'}</td>

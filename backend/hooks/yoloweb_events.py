@@ -303,6 +303,19 @@ def fail(error: BaseException) -> None:
     )
 
 
+def _set_in_memory(settings, key: str, value) -> None:
+    """ultralytics 설정을 이 프로세스 안에서만 바꾼다.
+
+    SETTINGS 는 JSONDict 라서 `SETTINGS[k] = v` 나 `.update()` 가 곧바로
+    %APPDATA%\\Ultralytics\\settings.json 에 쓴다. 그러면 동시에 도는 run 들이 서로 값을 덮어쓰고,
+    사용자의 전역 설정까지 바뀐다. dict.__setitem__ 으로 우회해 메모리에만 반영한다.
+    """
+    try:
+        dict.__setitem__(settings, key, value)
+    except Exception:
+        pass
+
+
 def install() -> bool:
     """전역 default_callbacks 에 등록한다. 성공하면 True."""
     global _writer
@@ -311,7 +324,14 @@ def install() -> bool:
         return False
     _writer = EventWriter(Path(run_dir))
 
+    from ultralytics.utils import SETTINGS
     from ultralytics.utils.callbacks import base
+
+    # 단독망: 텔레메트리 전송 차단. 설정 파일은 건드리지 않는다.
+    _set_in_memory(SETTINGS, "sync", False)
+    # TensorBoard 는 UI 옵션이다. 통합 콜백이 로드되기 전인 지금 반영해야 하고,
+    # sitecustomize 를 통해 DDP 자식 프로세스에서도 같은 코드가 돈다.
+    _set_in_memory(SETTINGS, "tensorboard", os.environ.get("YOLOWEB_TENSORBOARD") == "1")
 
     hooks = {
         "on_train_start": on_train_start,

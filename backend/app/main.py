@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import datasets, runs, system
+from app.api import datasets, presets, runs, system
 from app.core import db
 from app.core.config import FRONTEND_DIST, ensure_dirs
 from app.services import event_stream, run_manager
@@ -33,6 +33,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="YOLO 학습 콘솔", lifespan=lifespan)
 app.include_router(system.router)
+app.include_router(presets.router)
 app.include_router(datasets.router)
 app.include_router(runs.router)
 
@@ -50,4 +51,6 @@ if FRONTEND_DIST.is_dir():
         index = FRONTEND_DIST / "index.html"
         if index.is_file():
             return FileResponse(index)
-        return JSONResponse({"detail": "프론트엔드가 빌드되지 않았습니다."}, status_code=404)
+        return JSONResponse(
+            {"detail": "프론트엔드가 빌드되지 않았습니다."}, status_code=404
+        )

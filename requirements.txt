@@ -1,10 +1,30 @@
-# torch / torchvision 은 여기 없다.
-# CUDA 빌드라 인덱스가 달라서 scripts/setup.ps1 이 따로 설치한다.
-#   GPU:  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-#   CPU:  pip install torch torchvision
+# Single source of truth for the offline bundle.
+#
+# ASCII only on purpose: pip reads requirement files with the *locale* encoding
+# (cp949 on Korean Windows), so non-ASCII comments make `pip install -r` crash
+# on the target machine. Korean notes live in the bundle install guide instead.
+#
+# Do NOT generate this with `pip freeze`: the dev machine may have
+# opencv-python / opencv-contrib-python / opencv-python-headless installed at
+# the same time, and freezing would copy that conflict onto the target.
+#
+# torch/torchvision are CUDA builds and come from the PyTorch index; see
+# scripts/build_bundle.ps1 (it passes --extra-index-url).
 
+# web server
 fastapi==0.141.1
-uvicorn[standard]==0.52.0
+uvicorn==0.52.0
 python-multipart==0.0.32
-PyYAML==6.0.3
+websockets==16.0
+
+# training
 ultralytics==8.4.47
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+
+# export
+onnx==1.21.0
+onnxruntime-gpu==1.27.0
+
+# optional: TensorBoard logging (UI toggle, off by default)
+tensorboard==2.21.0

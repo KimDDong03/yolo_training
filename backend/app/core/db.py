@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS runs (
     name         TEXT NOT NULL,
     dataset_id   TEXT NOT NULL,
     status       TEXT NOT NULL,         -- queued|running|completed|stopped|failed
-    params       TEXT NOT NULL,         -- JSON
+    params       TEXT NOT NULL,         -- JSON (ultralytics 학습 인자)
     devices      TEXT NOT NULL,         -- JSON 배열 (GPU index, 빈 배열이면 CPU)
     pid          INTEGER,
     error        TEXT,
@@ -42,7 +42,26 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at   REAL,
     finished_at  REAL
 );
+
+CREATE TABLE IF NOT EXISTS presets (
+    name        TEXT PRIMARY KEY,
+    params      TEXT NOT NULL,          -- JSON
+    options     TEXT NOT NULL,          -- JSON
+    created_at  REAL NOT NULL
+);
 """
+
+# 나중에 추가된 컬럼. 이미 만들어진 app.db 를 그대로 열어야 하므로 ALTER 로 채운다.
+MIGRATIONS: list[tuple[str, str, str]] = [
+    ("runs", "options", "TEXT NOT NULL DEFAULT '{}'"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, decl in MIGRATIONS:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 def connect() -> sqlite3.Connection:
@@ -54,6 +73,7 @@ def connect() -> sqlite3.Connection:
             _conn.row_factory = sqlite3.Row
             _conn.execute("PRAGMA journal_mode=WAL")
             _conn.executescript(SCHEMA)
+            _migrate(_conn)
             _conn.commit()
     return _conn
 
@@ -98,6 +118,10 @@ def row_to_run(row: sqlite3.Row) -> dict[str, Any]:
         "dataset_id": row["dataset_id"],
         "status": row["status"],
         "params": json.loads(row["params"]),
+        # 이 컬럼이 생기기 전에 만들어진 run 은 options 가 없다 → 빈 객체로 읽는다.
+        "options": json.loads(row["options"])
+        if "options" in row.keys() and row["options"]
+        else {},
         "devices": json.loads(row["devices"]),
         "pid": row["pid"],
         "error": row["error"],

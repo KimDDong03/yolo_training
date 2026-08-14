@@ -39,7 +39,10 @@ def _persist(meta: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("")
 def list_datasets() -> list[dict[str, Any]]:
-    return [db.row_to_dataset(r) for r in db.query("SELECT * FROM datasets ORDER BY created_at DESC")]
+    return [
+        db.row_to_dataset(r)
+        for r in db.query("SELECT * FROM datasets ORDER BY created_at DESC")
+    ]
 
 
 @router.get("/{dataset_id}")
@@ -127,8 +130,13 @@ def dataset_samples(dataset_id: str, limit: int = 12) -> dict[str, Any]:
                 boxes.append(
                     {
                         "cls": cid,
-                        "name": dataset["classes"][cid] if cid < len(dataset["classes"]) else str(cid),
-                        "cx": cx, "cy": cy, "w": w, "h": h,
+                        "name": dataset["classes"][cid]
+                        if cid < len(dataset["classes"])
+                        else str(cid),
+                        "cx": cx,
+                        "cy": cy,
+                        "w": w,
+                        "h": h,
                     }
                 )
         samples.append({"path": str(image), "boxes": boxes})
@@ -137,12 +145,61 @@ def dataset_samples(dataset_id: str, limit: int = 12) -> dict[str, Any]:
     return {"samples": samples}
 
 
+@router.get("/{dataset_id}/review")
+def dataset_review(
+    dataset_id: str, category: str = "", offset: int = 0, limit: int = 24
+) -> dict[str, Any]:
+    """문제 유형별 이미지 목록.
+
+    숫자만 보여주면 판단에 못 쓴다 — 실제로 어떤 이미지인지 열어봐야 라벨링 실수인지 배경인지 안다.
+    """
+    dataset = get_dataset(dataset_id)
+    try:
+        review = dataset_ingest.load_review(
+            DATASETS_DIR / dataset_id, Path(dataset["root"])
+        )
+    except dataset_ingest.IngestError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    categories = review.get("categories", {})
+    summary = [
+        {k: v for k, v in entry.items() if k != "items"}
+        for entry in categories.values()
+    ]
+    summary.sort(key=lambda c: c["total"], reverse=True)
+
+    page: dict[str, Any] = {"items": [], "total": 0, "stored": 0, "truncated": False}
+    if category:
+        entry = categories.get(category)
+        if entry is None:
+            raise HTTPException(404, f"알 수 없는 검수 항목입니다: {category}")
+        items = entry.get("items", [])
+        page = {
+            "items": items[offset : offset + limit],
+            "total": entry["total"],
+            "stored": entry["stored"],
+            "truncated": entry["truncated"],
+        }
+
+    return {
+        "categories": summary,
+        "box_stats": review.get("box_stats", {}),
+        "review_cap": review.get("review_cap", 0),
+        "category": category,
+        "offset": offset,
+        "limit": limit,
+        **{"page": page},
+    }
+
+
 @router.get("/{dataset_id}/image")
 def dataset_image(dataset_id: str, path: str) -> FileResponse:
     """샘플 뷰어용 이미지 서빙. 등록된 데이터셋 루트 안쪽만 허용한다."""
     dataset = get_dataset(dataset_id)
     root = Path(dataset["root"]).resolve()
-    target = Path(path).resolve()
+    # 검수 목록은 root 기준 상대 경로를 주고, 샘플 목록은 절대 경로를 준다 — 둘 다 받는다.
+    raw = Path(path)
+    target = (raw if raw.is_absolute() else root / raw).resolve()
     if target != root and root not in target.parents:
         raise HTTPException(403, "데이터셋 폴더 밖의 파일은 열 수 없습니다.")
     if not target.is_file() or target.suffix.lower() not in IMAGE_SUFFIXES:
@@ -155,7 +212,9 @@ def delete_dataset(dataset_id: str) -> dict[str, str]:
     dataset = get_dataset(dataset_id)
     used = db.query_one("SELECT id FROM runs WHERE dataset_id = ?", (dataset_id,))
     if used is not None:
-        raise HTTPException(409, "이 데이터셋을 쓴 학습 기록이 있어 삭제할 수 없습니다.")
+        raise HTTPException(
+            409, "이 데이터셋을 쓴 학습 기록이 있어 삭제할 수 없습니다."
+        )
     # 경로 참조 데이터셋의 원본은 절대 지우지 않는다. 우리가 만든 폴더만 지운다.
     shutil.rmtree(DATASETS_DIR / dataset_id, ignore_errors=True)
     db.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))

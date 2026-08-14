@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import math
 from typing import Any
 
 from app.core.config import WEIGHTS_DIR
@@ -28,8 +28,8 @@ KNOWN_MODELS = [
 # (key, label, type, group, advanced, min, max, step, choices, help)
 _SPEC: list[tuple[Any, ...]] = [
     # --- 기본 ---
-    ("model", "모델", "enum", "기본", False, None, None, None, None,
-     "학습을 시작할 사전학습 가중치. n<s<m<l<x 순으로 크고 정확하지만 느리다."),
+    ("model", "모델", "path", "기본", False, None, None, None, None,
+     "가중치(.pt) 또는 모델 정의(.yaml) 경로. 이전 학습의 best.pt 를 넣으면 이어서 학습한다."),
     ("epochs", "에폭 수", "int", "기본", False, 1, 10000, 1, None,
      "전체 데이터셋을 몇 번 반복할지."),
     ("imgsz", "이미지 크기", "int", "기본", False, 32, 4096, 32, None,
@@ -105,29 +105,27 @@ _SPEC: list[tuple[Any, ...]] = [
      "끄면 예측 미리보기와 종료 후 플롯이 생성되지 않는다."),
 ]
 
+# UI 전용 값 — ultralytics 학습 인자가 아니다. model.train(**params) 에 넘기면 TypeError 가 난다.
+# (key, label, type, group, advanced, default, help)
+_OPTION_SPEC: list[tuple[Any, ...]] = [
+    ("tensorboard", "TensorBoard 로그", "bool", "저장", True, False,
+     "켜면 ultralytics 가 TensorBoard 로그도 함께 남긴다. 별도로 tensorboard 를 실행해 봐야 한다."),
+]
+
 # 기본 화면에서 처음부터 보이는 순서
 GROUP_ORDER = ["기본", "하드웨어", "옵티마이저", "손실 가중치", "증강", "학습 전략", "저장"]
 
 
-def available_models() -> list[dict[str, Any]]:
-    """bundle/weights 에 실제로 있는 .pt 를 먼저, 표준 이름을 그 뒤에 둔다.
-
-    단독망에서는 파일이 없는 모델을 고르면 다운로드를 시도하다 실패하므로
-    available=False 를 함께 내려 프론트가 경고를 띄우게 한다.
-    """
-    local: dict[str, Path] = {}
+def default_model() -> str:
+    """폼에 처음 채워둘 모델. 번들에 있는 가장 작은 .pt 를 고르고, 없으면 내장 정의로 떨어진다."""
     if WEIGHTS_DIR.is_dir():
-        for path in sorted(WEIGHTS_DIR.glob("*.pt")):
-            local[path.name] = path
-
-    models: list[dict[str, Any]] = []
-    for name in local:
-        models.append({"value": str(local[name]), "label": f"{name} (번들)", "available": True})
-    for name in KNOWN_MODELS:
-        if name in local:
-            continue
-        models.append({"value": name, "label": f"{name} (미반입)", "available": False})
-    return models
+        preferred = [p for name in KNOWN_MODELS for p in (WEIGHTS_DIR / name,) if p.is_file()]
+        if preferred:
+            return str(preferred[0].resolve())
+        any_pt = sorted(WEIGHTS_DIR.glob("*.pt"))
+        if any_pt:
+            return str(any_pt[0].resolve())
+    return "yolo11n.yaml"
 
 
 def _defaults() -> dict[str, Any]:
@@ -138,15 +136,12 @@ def _defaults() -> dict[str, Any]:
 
 def build_schema() -> dict[str, Any]:
     defaults = _defaults()
-    models = available_models()
-    first_available = next((m["value"] for m in models if m["available"]), None)
 
     fields: list[dict[str, Any]] = []
     for key, label, type_, group, advanced, min_, max_, step, choices, help_ in _SPEC:
         default = defaults.get(key)
         if key == "model":
-            choices = [{"value": m["value"], "label": m["label"], "available": m["available"]} for m in models]
-            default = first_available or (models[0]["value"] if models else "yolo11n.pt")
+            default = default_model()
         elif key == "cache":
             default = "False" if not default else str(default)
         elif choices is not None:
@@ -168,14 +163,101 @@ def build_schema() -> dict[str, Any]:
                 "step": step,
                 "choices": choices,
                 "help": help_,
+                "scope": "params",
+            }
+        )
+
+    for key, label, type_, group, advanced, default, help_ in _OPTION_SPEC:
+        fields.append(
+            {
+                "key": key,
+                "label": label,
+                "type": type_,
+                "group": group,
+                "advanced": advanced,
+                "default": default,
+                "min": None,
+                "max": None,
+                "step": None,
+                "choices": None,
+                "help": help_,
+                "scope": "options",
             }
         )
 
     return {"groups": GROUP_ORDER, "fields": fields}
 
 
-def defaults_dict() -> dict[str, Any]:
-    return {f["key"]: f["default"] for f in build_schema()["fields"]}
+def field_index() -> dict[str, dict[str, Any]]:
+    return {f["key"]: f for f in build_schema()["fields"]}
+
+
+def defaults_dict(scope: str = "params") -> dict[str, Any]:
+    return {f["key"]: f["default"] for f in build_schema()["fields"] if f["scope"] == scope}
+
+
+class ValidationError(Exception):
+    """폼 값 검증 실패. 메시지를 사용자에게 그대로 보여준다."""
+
+
+def _coerce(field: dict[str, Any], value: Any) -> Any:
+    key, type_ = field["key"], field["type"]
+    if value is None:
+        return field["default"]
+
+    if type_ == "bool":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in {"true", "false"}:
+            return value.lower() == "true"
+        raise ValidationError(f"{key}: 참/거짓 값이어야 합니다.")
+
+    if type_ in {"int", "float"}:
+        if isinstance(value, bool) or isinstance(value, (list, dict)):
+            raise ValidationError(f"{key}: 숫자여야 합니다.")
+        try:
+            number = int(value) if type_ == "int" else float(value)
+        except (TypeError, ValueError):
+            raise ValidationError(f"{key}: 숫자로 해석할 수 없습니다 ({value!r}).") from None
+        if not math.isfinite(number):
+            raise ValidationError(f"{key}: 유한한 숫자여야 합니다.")
+        if field["min"] is not None and number < field["min"]:
+            raise ValidationError(f"{key}: {field['min']} 이상이어야 합니다 (입력 {number}).")
+        if field["max"] is not None and number > field["max"]:
+            raise ValidationError(f"{key}: {field['max']} 이하여야 합니다 (입력 {number}).")
+        return number
+
+    if type_ == "enum":
+        allowed = {c["value"] for c in (field["choices"] or [])}
+        text = str(value)
+        if allowed and text not in allowed:
+            raise ValidationError(f"{key}: 허용되지 않은 값입니다 ({text!r}).")
+        return text
+
+    return str(value)
+
+
+def validate(values: dict[str, Any] | None, scope: str) -> dict[str, Any]:
+    """폼에서 온 값을 스키마 allowlist 로 걸러 검증한다.
+
+    이 함수가 유일한 관문이다. 없으면 임의의 키가 그대로 model.train(**params) 로 흘러들어가고,
+    UI 전용 값(options)이 학습 인자에 섞여 TypeError 를 낸다.
+    """
+    if values is None:
+        return {}
+    if not isinstance(values, dict):
+        raise ValidationError(f"{scope} 는 객체여야 합니다.")
+
+    index = field_index()
+    cleaned: dict[str, Any] = {}
+    for key, value in values.items():
+        field = index.get(key)
+        if field is None:
+            raise ValidationError(f"알 수 없는 항목입니다: {key}")
+        if field["scope"] != scope:
+            raise ValidationError(f"{key} 는 {scope} 가 아니라 {field['scope']} 에 속합니다.")
+        cleaned[key] = _coerce(field, value)
+    return cleaned
 
 
 PRESETS: dict[str, dict[str, Any]] = {

@@ -40,11 +40,9 @@ def main() -> int:
 
     try:
         from ultralytics import YOLO
-        from ultralytics.utils import SETTINGS
 
-        if SETTINGS.get("sync", True):
-            SETTINGS.update({"sync": False})  # 단독망: 텔레메트리 전송 차단
-
+        # sync/tensorboard 설정은 yoloweb_events.install() 이 메모리에만 반영한다.
+        # 여기서 SETTINGS.update() 를 쓰면 사용자의 전역 설정 파일을 덮어쓴다.
         model = YOLO(params.pop("model"))
         model.train(
             data=config["data"],

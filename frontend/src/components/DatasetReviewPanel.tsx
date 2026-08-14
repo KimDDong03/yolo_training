@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Dataset, DatasetReview } from '../types'
+import { Modal } from './ui/Dialog'
+import { EmptyState } from './ui/EmptyState'
 
 type SampleItem = { path: string; boxes: { name: string; cx: number; cy: number; w: number; h: number }[] }
 
@@ -21,7 +23,7 @@ export function DatasetReviewPanel({ dataset }: { dataset: Dataset | null | unde
     api.datasetReview(dataset.id, category).then(setReview).catch(() => setReview(null))
   }, [dataset?.id, category])
 
-  if (!dataset) return <p className="muted">데이터셋 정보가 없습니다.</p>
+  if (!dataset) return <EmptyState title="데이터셋 정보가 없습니다" />
 
   const report = dataset.report
   const problems = (review?.categories ?? []).filter((c) => c.total > 0)
@@ -32,16 +34,17 @@ export function DatasetReviewPanel({ dataset }: { dataset: Dataset | null | unde
       <div className="card">
         <h3>검수 요약</h3>
         <table>
+          <caption className="sr-only">데이터셋 검수 요약</caption>
           <tbody>
-            <tr><th>이미지</th><td>{report.total_images.toLocaleString()}장</td></tr>
+            <tr><th scope="row">이미지</th><td>{report.total_images.toLocaleString()}장</td></tr>
             <tr>
-              <th>train / val</th>
+              <th scope="row">train / val</th>
               <td>
                 {report.train_count} / {report.val_count}{' '}
                 {report.auto_split && <span className="muted">(자동 분할)</span>}
               </td>
             </tr>
-            <tr><th>클래스</th><td>{dataset.classes.join(', ')}</td></tr>
+            <tr><th scope="row">클래스</th><td>{dataset.classes.join(', ')}</td></tr>
           </tbody>
         </table>
 
@@ -63,16 +66,16 @@ export function DatasetReviewPanel({ dataset }: { dataset: Dataset | null | unde
 
       {stats && stats.count > 0 && (
         <div className="card">
-          <h3>
-            박스 분포
-            <span className="muted" style={{ float: 'right', fontWeight: 400 }}>
+          <div className="card-head">
+            <h3>박스 분포</h3>
+            <span className="muted small spacer" style={{ fontWeight: 400 }}>
               {stats.count.toLocaleString()}개 · 이미지 대비 1% 미만 {(stats.tiny_ratio * 100).toFixed(0)}%
             </span>
-          </h3>
+          </div>
           <Histogram title="크기 (이미지 면적 대비)" bins={stats.area} />
           <Histogram title="종횡비" bins={stats.aspect} />
           {stats.tiny_ratio > 0.3 && (
-            <div className="help" style={{ color: 'var(--warn)' }}>
+            <div className="help warn">
               작은 객체가 많습니다. 이미지 크기(imgsz)를 키우지 않으면 잘 안 잡힐 수 있습니다.
             </div>
           )}
@@ -84,17 +87,15 @@ export function DatasetReviewPanel({ dataset }: { dataset: Dataset | null | unde
         {problems.length === 0 ? (
           <p className="muted small">발견된 문제가 없습니다.</p>
         ) : (
-          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-            <button
-              style={{ fontSize: 12, padding: '3px 10px', borderColor: !category ? 'var(--accent)' : undefined }}
-              onClick={() => setCategory('')}
-            >
+          <div className="row wrap tight" role="group" aria-label="문제 종류 고르기">
+            <button className="btn-sm" aria-pressed={!category} onClick={() => setCategory('')}>
               샘플 보기
             </button>
             {problems.map((c) => (
               <button
                 key={c.code}
-                style={{ fontSize: 12, padding: '3px 10px', borderColor: category === c.code ? 'var(--accent)' : undefined }}
+                className="btn-sm"
+                aria-pressed={category === c.code}
                 onClick={() => setCategory(c.code)}
               >
                 {c.label} {c.total.toLocaleString()}
@@ -115,13 +116,14 @@ export function DatasetReviewPanel({ dataset }: { dataset: Dataset | null | unde
         {category
           ? (review?.page.items ?? []).map((item) => (
               <figure key={item.path}>
-                <img
-                  className="preview-img"
-                  src={api.datasetImageUrl(dataset.id, item.path)}
-                  alt={item.path}
+                {/* img onClick 은 키보드로 닿지 않는다. 버튼으로 감싸야 Tab·Enter 로 확대할 수 있다. */}
+                <button
+                  className="img-button"
+                  aria-label={`${item.path.split('/').pop()} 확대`}
                   onClick={() => setZoom(api.datasetImageUrl(dataset.id, item.path))}
-                  style={{ cursor: 'zoom-in' }}
-                />
+                >
+                  <img className="preview-img" src={api.datasetImageUrl(dataset.id, item.path)} alt={item.path} />
+                </button>
                 <figcaption>
                   {item.path.split('/').pop()}
                   {item.detail && <span className="error"> · {item.detail}</span>}
@@ -136,17 +138,25 @@ export function DatasetReviewPanel({ dataset }: { dataset: Dataset | null | unde
             ))}
       </div>
 
-      {zoom && (
-        <div
-          onClick={() => setZoom(null)}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 50,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out',
-          }}
-        >
-          <img src={zoom} alt="확대" style={{ maxWidth: '90vw', maxHeight: '90vh', imageRendering: 'pixelated' }} />
-        </div>
-      )}
+      {/* 손으로 만든 fixed 오버레이였다. <dialog> 는 ESC·포커스 트랩·포커스 복귀를 공짜로 준다. */}
+      <Modal
+        open={zoom !== null}
+        onClose={() => setZoom(null)}
+        className="dialog lightbox"
+        label="확대한 이미지"
+      >
+        {zoom && (
+          <button
+            className="img-button"
+            style={{ cursor: 'zoom-out' }}
+            aria-label="확대 닫기"
+            data-autofocus
+            onClick={() => setZoom(null)}
+          >
+            <img src={zoom} alt="확대한 이미지" />
+          </button>
+        )}
+      </Modal>
     </>
   )
 }
@@ -179,30 +189,43 @@ function SampleImage({
   onZoom?: (url: string) => void
 }) {
   const url = api.datasetImageUrl(datasetId, path)
+
+  // 박스는 span 이다 — button 안에 div 를 넣으면 콘텐츠 모델을 어긴다.
+  const overlay = boxes.map((b, i) => (
+    <span
+      key={i}
+      style={{
+        display: 'block',
+        position: 'absolute',
+        left: `${(b.cx - b.w / 2) * 100}%`,
+        top: `${(b.cy - b.h / 2) * 100}%`,
+        width: `${b.w * 100}%`,
+        height: `${b.h * 100}%`,
+        border: '1.5px solid var(--ok)',
+        borderRadius: 2,
+      }}
+      title={b.name}
+    />
+  ))
+
+  if (!onZoom) {
+    return (
+      <div style={{ position: 'relative' }}>
+        <img className="preview-img" src={url} alt={path} />
+        {overlay}
+      </div>
+    )
+  }
+
   return (
-    <div style={{ position: 'relative' }}>
-      <img
-        className="preview-img"
-        src={url}
-        alt={path}
-        style={{ cursor: onZoom ? 'zoom-in' : undefined }}
-        onClick={() => onZoom?.(url)}
-      />
-      {boxes.map((b, i) => (
-        <div
-          key={i}
-          style={{
-            position: 'absolute',
-            left: `${(b.cx - b.w / 2) * 100}%`,
-            top: `${(b.cy - b.h / 2) * 100}%`,
-            width: `${b.w * 100}%`,
-            height: `${b.h * 100}%`,
-            border: '1.5px solid #35c46b',
-            borderRadius: 2,
-          }}
-          title={b.name}
-        />
-      ))}
-    </div>
+    <button
+      className="img-button"
+      style={{ position: 'relative' }}
+      aria-label={`${path.split(/[\\/]/).pop()} 확대`}
+      onClick={() => onZoom(url)}
+    >
+      <img className="preview-img" src={url} alt={path} />
+      {overlay}
+    </button>
   )
 }

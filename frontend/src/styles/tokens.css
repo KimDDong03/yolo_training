@@ -1,0 +1,64 @@
+/*
+ * 디자인 토큰.
+ *
+ * 다크 전용이다 — 라이트 모드를 지원하지 않으므로 테마 전환용 셀렉터를 두지 않는다.
+ * 글자색은 모두 --panel 배경 기준 WCAG AA(4.5:1) 를 넘도록 골랐다. 아래 주석의 비율이 근거다.
+ */
+:root {
+  /* 표면 */
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-2: #1d212a;
+  --panel-3: #242936; /* 호버·선택 */
+  --line: #2a2f3a;
+  --line-strong: #3a4150;
+
+  /* 글자 — 괄호 안은 --panel 위 대비 */
+  --text: #e6e8ee; /* 14.5:1 */
+  --muted: #949cad; /* 6.3:1 */
+  --muted-2: #828c9f; /* 5.1:1 — 도움말처럼 한 단계 더 약한 글자. 이보다 어둡게 두지 않는다. */
+
+  /* 의미 */
+  --accent: #4f8cff; /* 5.4:1 */
+  --accent-weak: rgba(79, 140, 255, 0.14);
+  --ok: #35c46b; /* 7.7:1 */
+  --warn: #e2b23c; /* 8.8:1 */
+  --err: #e2564a; /* 4.7:1 */
+  --err-weak: rgba(226, 86, 74, 0.12);
+
+  /* 간격 */
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 24px;
+
+  /* 타이포 */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+
+  /* 모서리 */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-full: 999px;
+
+  /* 그림자 */
+  --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 8px 28px rgba(0, 0, 0, 0.5);
+
+  /* 겹침 순서 */
+  --z-sticky: 10;
+  --z-dialog: 50;
+  --z-toast: 60;
+
+  /* 포커스 링 — 굵기를 한 곳에서 정한다 */
+  --focus-ring: 0 0 0 2px var(--accent);
+
+  /* 단독망 전제: 웹폰트를 불러오지 않고 시스템 폰트만 쓴다. */
+  --mono: 'Cascadia Mono', Consolas, 'D2Coding', monospace;
+  font-family: 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
+}

@@ -1,39 +1,56 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api } from '../api'
+import type { Dataset, Gpu, ParamField, ParamSchema, Preset, SystemInfo, WeightCandidate } from '../types'
+import type { LoadStatus } from '../useResource'
+import { DatasetRegister } from './DatasetRegister'
 import { DatasetReviewPanel } from './DatasetReviewPanel'
-import type {
-  Dataset,
-  Gpu,
-  ModelCheck,
-  ParamField,
-  ParamSchema,
-  Preset,
-  SystemInfo,
-  WeightCandidate,
-} from '../types'
+import { useConfirm, usePrompt } from './ui/Dialog'
+import { Field, type FieldStatus } from './ui/Field'
+import { useToast } from './ui/Toast'
 
 interface Props {
   datasets: Dataset[]
+  datasetsStatus: LoadStatus
+  onRetryDatasets: () => void
   gpus: Gpu[]
+  gpusStatus: LoadStatus
+  onRetryGpus: () => void
   onDatasetsChanged: () => void
   onStarted: (runId: string) => void
 }
 
-export function NewRunPanel({ datasets, gpus, onDatasetsChanged, onStarted }: Props) {
+export function NewRunPanel({
+  datasets,
+  datasetsStatus,
+  onRetryDatasets,
+  gpus,
+  gpusStatus,
+  onRetryGpus,
+  onDatasetsChanged,
+  onStarted,
+}: Props) {
   const [schema, setSchema] = useState<ParamSchema | null>(null)
   const [presets, setPresets] = useState<Preset[]>([])
   const [values, setValues] = useState<Record<string, unknown>>({})
+  const [appliedPreset, setAppliedPreset] = useState<string | null>(null)
   const [datasetId, setDatasetId] = useState('')
   const [devices, setDevices] = useState<number[]>([])
   const [advanced, setAdvanced] = useState(false)
   const [filter, setFilter] = useState('')
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [runName, setRunName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [candidates, setCandidates] = useState<WeightCandidate[]>([])
   const [info, setInfo] = useState<SystemInfo | null>(null)
-  const [modelCheck, setModelCheck] = useState<ModelCheck | null>(null)
   const [showReview, setShowReview] = useState(false)
+
+  // 검증 결과에 "무엇을 검증했는지"를 같이 들고 있는다. 아래 check 계산이 이 값에 기댄다.
+  const [modelCheck, setModelCheck] = useState<{ value: string; ok: boolean; message: string } | null>(null)
+
+  const confirm = useConfirm()
+  const prompt = usePrompt()
+  const toast = useToast()
 
   useEffect(() => {
     api.paramsSchema().then((r) => {
@@ -45,18 +62,40 @@ export function NewRunPanel({ datasets, gpus, onDatasetsChanged, onStarted }: Pr
     api.systemInfo().then(setInfo).catch(() => {})
   }, [])
 
-  // 모델 경로는 입력이 멈춘 뒤 서버에 물어본다. 학습을 시작하고 나서야 틀린 걸 아는 상황을 막는다.
+  /*
+   * 모델 경로는 입력이 멈춘 뒤 서버에 물어본다. 학습을 시작하고 나서야 틀린 걸 아는 상황을 막는다.
+   *
+   * 디바운스 타이머만 취소하면 이미 날아간 요청은 못 막는다. 이전 경로의 "정상" 응답이
+   * 늦게 도착하면 지금 입력된 틀린 경로가 통과된 것처럼 보인다. 그래서 effect 마다
+   * cancelled 로 응답 자체를 버린다 — 값만 비교해서 걸러내면 그 응답이 state 에 남아
+   * 현재 값과 영영 어긋난 채로 "확인 중" 에 잠긴다(새 요청은 modelValue 가 안 바뀌어 안 뜬다).
+   */
   const modelValue = String(values['model'] ?? '')
   useEffect(() => {
     if (!modelValue) {
       setModelCheck(null)
       return
     }
+    let cancelled = false
     const timer = setTimeout(() => {
-      api.validateModel(modelValue).then(setModelCheck).catch(() => setModelCheck(null))
+      api
+        .validateModel(modelValue)
+        .then((r) => {
+          if (!cancelled) setModelCheck({ value: modelValue, ok: r.ok, message: r.message })
+        })
+        .catch(() => {
+          // 확인 자체를 못 했으면 통과시키지 않는다. null 로 두면 영원히 "확인 중" 이다.
+          if (!cancelled) setModelCheck({ value: modelValue, ok: false, message: '경로를 확인하지 못했습니다.' })
+        })
     }, 300)
-    return () => clearTimeout(timer)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [modelValue])
+
+  const check = modelCheck && modelCheck.value === modelValue ? modelCheck : null
+  const checking = modelValue !== '' && check === null
 
   useEffect(() => {
     if (!datasetId && datasets.length) setDatasetId(datasets[0].id)
@@ -67,6 +106,7 @@ export function NewRunPanel({ datasets, gpus, onDatasetsChanged, onStarted }: Pr
   }, [gpus])
 
   const dataset = datasets.find((d) => d.id === datasetId)
+
   const groups = useMemo(() => {
     if (!schema) return []
     const needle = filter.trim().toLowerCase()
@@ -97,6 +137,20 @@ export function NewRunPanel({ datasets, gpus, onDatasetsChanged, onStarted }: Pr
     return parts.join(' ')
   }, [schema, values, dataset, devices])
 
+  function update(key: string, v: unknown) {
+    setValues((s) => ({ ...s, [key]: v }))
+    setAppliedPreset(null) // 손으로 고친 순간 더 이상 그 프리셋이 아니다
+  }
+
+  function scopedValues() {
+    const params: Record<string, unknown> = {}
+    const options: Record<string, unknown> = {}
+    for (const f of schema?.fields ?? []) {
+      ;(f.scope === 'options' ? options : params)[f.key] = values[f.key]
+    }
+    return { params, options }
+  }
+
   async function start() {
     if (!dataset || !schema) return
     setBusy(true)
@@ -104,12 +158,7 @@ export function NewRunPanel({ datasets, gpus, onDatasetsChanged, onStarted }: Pr
     try {
       // 서버는 params(학습 인자)와 options(UI 전용)를 각각 allowlist 로 검증한다.
       // 여기서 스코프별로 나눠 보내지 않으면 422 로 거절된다.
-      const params: Record<string, unknown> = {}
-      const options: Record<string, unknown> = {}
-      for (const field of schema.fields) {
-        const target = field.scope === 'options' ? options : params
-        target[field.key] = values[field.key]
-      }
+      const { params, options } = scopedValues()
       const run = await api.createRun({
         dataset_id: dataset.id,
         name: runName || dataset.name,
@@ -125,6 +174,60 @@ export function NewRunPanel({ datasets, gpus, onDatasetsChanged, onStarted }: Pr
     }
   }
 
+  async function savePreset() {
+    if (!schema) return
+    const name = await prompt({
+      title: '프리셋 저장',
+      label: '프리셋 이름',
+      body: '지금 화면의 파라미터 전체를 이 이름으로 저장합니다.',
+      confirmLabel: '저장',
+    })
+    if (!name) return
+    const { params, options } = scopedValues()
+    try {
+      await api.savePreset(name, params, options)
+      setPresets((await api.presets()).presets)
+      setAppliedPreset(name)
+      toast(`'${name}' 프리셋을 저장했습니다`, 'success')
+    } catch (e) {
+      toast(String(e instanceof Error ? e.message : e), 'error')
+    }
+  }
+
+  async function deletePreset(preset: Preset) {
+    const ok = await confirm({
+      title: `'${preset.name}' 프리셋을 삭제할까요?`,
+      confirmLabel: '삭제',
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      await api.deletePreset(preset.name)
+      setPresets((await api.presets()).presets)
+      if (appliedPreset === preset.name) setAppliedPreset(null)
+    } catch (e) {
+      toast(String(e instanceof Error ? e.message : e), 'error')
+    }
+  }
+
+  // 서버 응답을 못 받은 상태를 "없음" 으로 접어 두지 않는다. 각각 다른 이유이고 다른 행동을 부른다.
+  const blockedReason =
+    datasetsStatus === 'error'
+      ? '데이터셋 목록을 불러오지 못했습니다.'
+      : gpusStatus === 'error'
+        ? 'GPU 상태를 확인하지 못했습니다. 확인 전에는 시작하지 않습니다.'
+        : !datasets.length
+          ? datasetsStatus === 'loading'
+            ? '데이터셋을 불러오는 중입니다.'
+            : '먼저 데이터셋을 등록하세요.'
+          : !dataset
+            ? '학습할 데이터셋을 고르세요.'
+            : check?.ok === false
+              ? '모델 경로가 올바르지 않습니다.'
+              : checking
+                ? '모델 경로를 확인하는 중입니다.'
+                : null
+
   return (
     <div className="pane">
       <DatasetRegister onDone={onDatasetsChanged} />
@@ -132,32 +235,69 @@ export function NewRunPanel({ datasets, gpus, onDatasetsChanged, onStarted }: Pr
       <div className="card">
         <h3>학습 대상</h3>
         <div className="grid">
-          <div className="field">
-            <label>데이터셋</label>
-            <select value={datasetId} onChange={(e) => setDatasetId(e.target.value)}>
-              {datasets.length === 0 && <option value="">등록된 데이터셋이 없습니다</option>}
-              {datasets.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} · {d.report.total_images}장 · {d.classes.length}클래스
-                </option>
-              ))}
-            </select>
-            {dataset && <div className="help mono">{dataset.yaml_path}</div>}
-          </div>
-          <div className="field">
-            <label>실행 이름</label>
-            <input value={runName} placeholder={dataset?.name ?? ''} onChange={(e) => setRunName(e.target.value)} />
-          </div>
+          <Field
+            label="데이터셋"
+            help={dataset ? <span className="mono">{dataset.yaml_path}</span> : undefined}
+            status={
+              datasetsStatus === 'error'
+                ? { kind: 'bad', text: '목록을 불러오지 못했습니다.' }
+                : undefined
+            }
+          >
+            {(props) => (
+              <select {...props} value={datasetId} onChange={(e) => setDatasetId(e.target.value)}>
+                {datasets.length === 0 && (
+                  <option value="">
+                    {datasetsStatus === 'loading'
+                      ? '불러오는 중…'
+                      : datasetsStatus === 'error'
+                        ? '불러오지 못했습니다'
+                        : '등록된 데이터셋이 없습니다'}
+                  </option>
+                )}
+                {datasets.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} · {d.report.total_images}장 · {d.classes.length}클래스
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <Field label="실행 이름">
+            {(props) => (
+              <input
+                {...props}
+                value={runName}
+                placeholder={dataset?.name ?? ''}
+                onChange={(e) => setRunName(e.target.value)}
+              />
+            )}
+          </Field>
         </div>
 
-        <div className="field" style={{ marginTop: 10 }}>
-          <label>사용할 GPU</label>
-          {gpus.length === 0 ? (
-            <div className="small muted">GPU를 찾지 못했습니다. CPU로 학습합니다(매우 느립니다).</div>
+        <fieldset className="group" style={{ marginTop: 10, marginBottom: 0 }}>
+          <legend className="small muted" style={{ marginBottom: 4 }}>
+            사용할 GPU
+          </legend>
+          {/*
+            "GPU 가 없다" 와 "GPU 목록을 못 받았다" 를 같은 문구로 보여주면, 서버가 잠깐 죽은 사이에
+            사용자가 CPU 학습을 시작해 버린다. 실패는 실패라고 말하고 다시 시도할 길을 준다.
+          */}
+          {gpusStatus === 'error' ? (
+            <div className="row tight small error">
+              <span>GPU 상태를 확인하지 못했습니다.</span>
+              <button className="btn-xs" onClick={onRetryGpus}>
+                다시 시도
+              </button>
+            </div>
+          ) : gpus.length === 0 ? (
+            <div className="small muted">
+              {gpusStatus === 'loading' ? 'GPU를 확인하는 중…' : 'GPU를 찾지 못했습니다. CPU로 학습합니다(매우 느립니다).'}
+            </div>
           ) : (
-            <div className="row" style={{ flexWrap: 'wrap', gap: 12 }}>
+            <div className="row wrap" style={{ gap: 12 }}>
               {gpus.map((g) => (
-                <label key={g.index} className="row small" style={{ gap: 5 }}>
+                <label key={g.index} className="row tight small">
                   <input
                     type="checkbox"
                     checked={devices.includes(g.index)}
@@ -175,11 +315,13 @@ export function NewRunPanel({ datasets, gpus, onDatasetsChanged, onStarted }: Pr
           {devices.length > 1 && (
             <div className="help">GPU를 2장 이상 고르면 ultralytics가 DDP(분산 학습)로 실행합니다.</div>
           )}
-        </div>
+        </fieldset>
 
         {dataset && (
           <button
-            style={{ marginTop: 10, fontSize: 12 }}
+            className="btn-sm"
+            style={{ marginTop: 10 }}
+            aria-expanded={showReview}
             onClick={() => setShowReview((s) => !s)}
           >
             {showReview ? '데이터셋 검수 접기' : '데이터셋 검수 보기'}
@@ -191,280 +333,245 @@ export function NewRunPanel({ datasets, gpus, onDatasetsChanged, onStarted }: Pr
       {dataset && showReview && <DatasetReviewPanel dataset={dataset} />}
 
       <div className="card">
-        <h3 className="row" style={{ gap: 10 }}>
-          파라미터
+        <div className="card-head">
+          <h3>파라미터</h3>
+          <label className="sr-only" htmlFor="param-filter">
+            파라미터 이름으로 거르기
+          </label>
           <input
-            style={{ width: 160, marginLeft: 'auto' }}
+            id="param-filter"
+            type="search"
+            className="small spacer"
+            style={{ width: 160 }}
             placeholder="이름으로 필터"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          <label className="row small muted" style={{ gap: 4 }}>
+          <label className="row tight small muted nowrap">
             <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
             고급
           </label>
-        </h3>
+        </div>
 
-        <div className="row" style={{ gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div className="row wrap tight" role="group" aria-label="프리셋" style={{ marginBottom: 12 }}>
           <span className="small muted">프리셋</span>
           {presets.map((p) => (
             <span key={p.name} className="row" style={{ gap: 2 }}>
               <button
-                style={{ fontSize: 12, padding: '3px 10px' }}
+                className="btn-sm"
+                aria-pressed={appliedPreset === p.name}
                 title={p.builtin ? '내장 프리셋' : '내가 저장한 프리셋'}
-                onClick={() => setValues((v) => ({ ...v, ...p.params, ...p.options }))}
+                onClick={() => {
+                  setValues((v) => ({ ...v, ...p.params, ...p.options }))
+                  setAppliedPreset(p.name)
+                }}
               >
                 {p.builtin ? p.name : `★ ${p.name}`}
               </button>
               {!p.builtin && (
-                <button
-                  style={{ fontSize: 11, padding: '3px 6px' }}
-                  title="삭제"
-                  onClick={async () => {
-                    await api.deletePreset(p.name).catch(() => {})
-                    api.presets().then((r) => setPresets(r.presets)).catch(() => {})
-                  }}
-                >
+                <button className="btn-xs ghost" aria-label={`${p.name} 프리셋 삭제`} onClick={() => deletePreset(p)}>
                   ✕
                 </button>
               )}
             </span>
           ))}
-          <button
-            style={{ fontSize: 12, padding: '3px 10px' }}
-            onClick={async () => {
-              if (!schema) return
-              const name = window.prompt('프리셋 이름을 입력하세요')?.trim()
-              if (!name) return
-              const params: Record<string, unknown> = {}
-              const options: Record<string, unknown> = {}
-              for (const f of schema.fields) {
-                ;(f.scope === 'options' ? options : params)[f.key] = values[f.key]
-              }
-              try {
-                await api.savePreset(name, params, options)
-                const r = await api.presets()
-                setPresets(r.presets)
-              } catch (e) {
-                setError(String(e instanceof Error ? e.message : e))
-              }
-            }}
-          >
+          <button className="btn-sm" onClick={savePreset}>
             + 현재 설정 저장
           </button>
         </div>
 
-        {groups.map(({ group, fields }) => (
-          <div key={group} style={{ marginBottom: 14 }}>
-            <div className="small muted" style={{ marginBottom: 6 }}>{group}</div>
-            <div className="grid">
-              {fields.map((f) => (
-                <Field
-                  key={f.key}
-                  field={f}
-                  value={values[f.key]}
-                  onChange={(v) => setValues((s) => ({ ...s, [f.key]: v }))}
-                  candidates={f.key === 'model' ? candidates : undefined}
-                  disabled={f.key === 'tensorboard' && info != null && !info.tensorboard}
-                  note={
-                    f.key === 'model' && modelCheck ? (
-                      <div className="help" style={{ color: modelCheck.ok ? 'var(--ok)' : 'var(--err)' }}>
-                        {modelCheck.ok ? '✓ ' : '✕ '}
-                        {modelCheck.message}
-                      </div>
-                    ) : f.key === 'tensorboard' && info != null && !info.tensorboard ? (
-                      <div className="help">tensorboard 패키지가 설치되어 있지 않습니다.</div>
-                    ) : undefined
+        {groups.map(({ group, fields }) => {
+          const open = !collapsed.has(group)
+          return (
+            <fieldset className="group" key={group}>
+              <legend>
+                <button
+                  type="button"
+                  className="group-toggle"
+                  aria-expanded={open}
+                  onClick={() =>
+                    setCollapsed((s) => {
+                      const next = new Set(s)
+                      if (open) next.add(group)
+                      else next.delete(group)
+                      return next
+                    })
                   }
-                />
-              ))}
-            </div>
-          </div>
-        ))}
+                >
+                  <span className="chevron" aria-hidden="true">
+                    ▾
+                  </span>
+                  {group}
+                  <span className="tiny">{fields.length}개</span>
+                </button>
+              </legend>
+              {open && (
+                <div className="grid">
+                  {fields.map((f) => (
+                    <ParamFieldControl
+                      key={f.key}
+                      field={f}
+                      value={values[f.key]}
+                      onChange={(v) => update(f.key, v)}
+                      candidates={f.key === 'model' ? candidates : undefined}
+                      disabled={f.key === 'tensorboard' && info != null && !info.tensorboard}
+                      status={
+                        f.key === 'model' && check
+                          ? { kind: check.ok ? 'ok' : 'bad', text: `${check.ok ? '✓' : '✕'} ${check.message}` }
+                          : f.key === 'model' && checking
+                            ? { kind: 'ok', text: '확인 중…' }
+                            : undefined
+                      }
+                      help={
+                        f.key === 'tensorboard' && info != null && !info.tensorboard
+                          ? 'tensorboard 패키지가 설치되어 있지 않습니다.'
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+            </fieldset>
+          )
+        })}
       </div>
 
       <div className="card">
         <h3>동등한 CLI 명령</h3>
-        <div className="log mono" style={{ maxHeight: 90 }}>{cli}</div>
-        <button style={{ marginTop: 8, fontSize: 12 }} onClick={() => navigator.clipboard?.writeText(cli)}>
+        <div className="log mono" style={{ maxHeight: 90, flex: 'none' }}>
+          {cli}
+        </div>
+        <button
+          className="btn-sm"
+          style={{ marginTop: 8 }}
+          disabled={!cli}
+          onClick={() => {
+            navigator.clipboard
+              ?.writeText(cli)
+              .then(() => toast('CLI 명령을 복사했습니다', 'success'))
+              .catch(() => toast('클립보드에 복사하지 못했습니다', 'error'))
+          }}
+        >
           복사
         </button>
       </div>
 
       {error && <div className="card error">{error}</div>}
 
-      <button
-        className="primary"
-        disabled={!dataset || busy || modelCheck?.ok === false}
-        onClick={start}
-        style={{ width: '100%', padding: 10 }}
-      >
-        {busy ? '시작하는 중…' : modelCheck?.ok === false ? '모델 경로를 확인하세요' : '학습 시작'}
-      </button>
+      <div className="sticky-foot">
+        <div className="stack" style={{ flex: 1, gap: 4 }}>
+          <button
+            className="primary"
+            style={{ padding: 10 }}
+            disabled={busy || blockedReason !== null}
+            onClick={start}
+          >
+            {busy ? '시작하는 중…' : '학습 시작'}
+          </button>
+          {blockedReason && (
+            <span className="row tight small muted">
+              <span>{blockedReason}</span>
+              {datasetsStatus === 'error' && (
+                <button className="btn-xs" onClick={onRetryDatasets}>
+                  다시 시도
+                </button>
+              )}
+              {gpusStatus === 'error' && (
+                <button className="btn-xs" onClick={onRetryGpus}>
+                  다시 시도
+                </button>
+              )}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
 
-function Field({
+/**
+ * 스키마 한 필드를 실제 컨트롤로 바꾼다.
+ *
+ * 라벨 연결과 도움말 배치는 ui/Field 가 하고, "이 타입은 어떤 컨트롤인가" 같은
+ * 도메인 판단만 여기 남긴다. 둘을 한 파일에 섞으면 Field 를 다른 화면에서 못 쓴다.
+ */
+function ParamFieldControl({
   field,
   value,
   onChange,
   candidates,
   disabled,
-  note,
+  status,
+  help,
 }: {
   field: ParamField
   value: unknown
   onChange: (v: unknown) => void
   candidates?: WeightCandidate[]
   disabled?: boolean
-  note?: React.ReactNode
+  status?: FieldStatus
+  help?: ReactNode
 }) {
-  const listId = `list-${field.key}`
   return (
-    <div className="field">
-      <label title={field.key}>
-        {field.label} <span className="mono muted" style={{ fontSize: 10 }}>{field.key}</span>
-      </label>
-      {field.type === 'bool' ? (
-        <input
-          type="checkbox"
-          checked={!!value}
-          disabled={disabled}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-      ) : field.type === 'path' ? (
-        // 숫자 입력으로 렌더링되면 경로가 NaN 이 된다. 반드시 텍스트로 받는다.
-        <>
+    <Field
+      label={field.label}
+      labelExtra={<span className="mono muted tiny"> {field.key}</span>}
+      help={help ?? field.help}
+      status={status}
+    >
+      {(props) => {
+        if (field.type === 'bool') {
+          return <input {...props} type="checkbox" checked={!!value} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+        }
+        if (field.type === 'path') {
+          // 숫자 입력으로 렌더링되면 경로가 NaN 이 된다. 반드시 텍스트로 받는다.
+          const listId = `${props.id}-list`
+          return (
+            <>
+              <input
+                {...props}
+                type="text"
+                spellCheck={false}
+                list={listId}
+                value={value === null || value === undefined ? '' : String(value)}
+                placeholder="경로를 입력하거나 목록에서 고르세요"
+                onChange={(e) => onChange(e.target.value)}
+              />
+              <datalist id={listId}>
+                {(candidates ?? []).map((c) => (
+                  <option key={c.value} value={c.value} label={`${c.label} — ${c.detail}`} />
+                ))}
+              </datalist>
+            </>
+          )
+        }
+        if (field.type === 'enum' && field.choices) {
+          return (
+            <select {...props} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}>
+              {field.choices.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          )
+        }
+        return (
           <input
-            type="text"
-            spellCheck={false}
-            list={listId}
+            {...props}
+            type="number"
             value={value === null || value === undefined ? '' : String(value)}
-            placeholder="경로를 입력하거나 목록에서 고르세요"
-            onChange={(e) => onChange(e.target.value)}
+            min={field.min ?? undefined}
+            max={field.max ?? undefined}
+            step={field.step ?? undefined}
+            onChange={(e) => {
+              const raw = e.target.value
+              if (raw === '') return onChange(null)
+              onChange(field.type === 'int' ? parseInt(raw, 10) : parseFloat(raw))
+            }}
           />
-          <datalist id={listId}>
-            {(candidates ?? []).map((c) => (
-              <option key={c.value} value={c.value} label={`${c.label} — ${c.detail}`} />
-            ))}
-          </datalist>
-        </>
-      ) : field.type === 'enum' && field.choices ? (
-        <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}>
-          {field.choices.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          type="number"
-          value={value === null || value === undefined ? '' : String(value)}
-          min={field.min ?? undefined}
-          max={field.max ?? undefined}
-          step={field.step ?? undefined}
-          onChange={(e) => {
-            const raw = e.target.value
-            if (raw === '') return onChange(null)
-            onChange(field.type === 'int' ? parseInt(raw, 10) : parseFloat(raw))
-          }}
-        />
-      )}
-      {note}
-      {field.help && <div className="help">{field.help}</div>}
-    </div>
-  )
-}
-
-function DatasetRegister({ onDone }: { onDone: () => void }) {
-  const [path, setPath] = useState('')
-  const [valRatio, setValRatio] = useState(0.2)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [over, setOver] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  async function upload(file: File) {
-    setBusy(true)
-    setError('')
-    try {
-      await api.uploadZip(file, file.name.replace(/\.zip$/i, ''), valRatio)
-      onDone()
-    } catch (e) {
-      setError(String(e instanceof Error ? e.message : e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function register() {
-    setBusy(true)
-    setError('')
-    try {
-      await api.registerPath(path, path.split(/[\\/]/).filter(Boolean).pop() ?? path, valRatio)
-      setPath('')
-      onDone()
-    } catch (e) {
-      setError(String(e instanceof Error ? e.message : e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="card">
-      <h3>데이터셋 등록</h3>
-      <div
-        className={`drop ${over ? 'over' : ''}`}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setOver(true)
-        }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => {
-          e.preventDefault()
-          setOver(false)
-          const file = e.dataTransfer.files[0]
-          if (file) upload(file)
-        }}
-        onClick={() => fileRef.current?.click()}
-      >
-        {busy ? '처리 중…' : 'zip 파일을 여기에 끌어다 놓거나 클릭해서 선택'}
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".zip"
-          style={{ display: 'none' }}
-          onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
-        />
-      </div>
-
-      <div className="row" style={{ gap: 8, marginTop: 10 }}>
-        <input
-          placeholder="또는 서버 폴더 경로 지정 — 예: D:\data\coins"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-        />
-        <button disabled={!path || busy} onClick={register} style={{ whiteSpace: 'nowrap' }}>
-          경로 등록
-        </button>
-      </div>
-      <div className="row small muted" style={{ gap: 8, marginTop: 8 }}>
-        <span>train/val 이 없을 때 검증 비율</span>
-        <input
-          type="number"
-          step={0.05}
-          min={0.05}
-          max={0.5}
-          value={valRatio}
-          onChange={(e) => setValRatio(parseFloat(e.target.value))}
-          style={{ width: 80 }}
-        />
-        <span>경로 등록은 파일을 복사하지 않고 원본을 그대로 참조합니다.</span>
-      </div>
-      {error && <div className="error small" style={{ marginTop: 8 }}>{error}</div>}
-    </div>
+        )
+      }}
+    </Field>
   )
 }

@@ -10,16 +10,10 @@ import {
   YAxis,
 } from 'recharts'
 import { api } from '../api'
+import { chartAxis, chartGrid, chartLegend, chartTooltip, seriesColor } from '../theme'
 import type { Run, TrainEvent } from '../types'
+import { EmptyState, SkeletonRows } from './ui/EmptyState'
 
-const COLORS = ['#4f8cff', '#35c46b', '#e2b23c', '#b07cff', '#e2564a', '#3fc7c7']
-const AXIS = { stroke: '#5b6273', fontSize: 11 }
-const TOOLTIP_STYLE = {
-  background: '#171a21',
-  border: '1px solid #2a2f3a',
-  borderRadius: 6,
-  fontSize: 12,
-}
 const METRICS = ['mAP50-95', 'mAP50', 'precision', 'recall'] as const
 
 interface Loaded {
@@ -30,30 +24,36 @@ interface Loaded {
 /**
  * 완료된 run 여러 개를 겹쳐 본다.
  *
- * 전용 비교 API 를 만들지 않는다 — 필요한 건 이미 /api/runs/{id} 와 /api/runs/{id}/events 에 다 있고,
- * 비교 대상은 보통 2~3개라 병렬로 불러도 비용이 없다.
+ * 전용 비교 API 를 만들지 않는다 — 필요한 건 이미 /api/runs/{id} 와 /api/runs/{id}/events 에 다 있다.
+ * 선택 개수는 사이드바에서 COMPARE_LIMIT 로 묶여 있어 병렬 요청이 무한히 늘지 않는다.
  */
 export function CompareView({ runIds }: { runIds: string[] }) {
   const [loaded, setLoaded] = useState<Loaded[]>([])
+  const [failed, setFailed] = useState<string[]>([])
   const [metric, setMetric] = useState<(typeof METRICS)[number]>('mAP50-95')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (!runIds.length) {
       setLoaded([])
+      setFailed([])
       return
     }
     let cancelled = false
     setLoading(true)
-    Promise.all(
+    // allSettled 다 — 하나가 실패해도 나머지는 그린다. 예전에는 삭제된 run 하나가
+    // 선택에 남아 있으면 비교 화면 전체가 빈 채로 떴다.
+    Promise.allSettled(
       runIds.map(async (id) => {
         const [run, events] = await Promise.all([api.run(id), api.events(id)])
         return { run, epochs: events.events.filter((e) => e.t === 'epoch') }
       }),
-    )
-      .then((rows) => !cancelled && setLoaded(rows))
-      .catch(() => !cancelled && setLoaded([]))
-      .finally(() => !cancelled && setLoading(false))
+    ).then((results) => {
+      if (cancelled) return
+      setLoaded(results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : [])))
+      setFailed(runIds.filter((_, i) => results[i].status === 'rejected'))
+      setLoading(false)
+    })
     return () => {
       cancelled = true
     }
@@ -108,38 +108,61 @@ export function CompareView({ runIds }: { runIds: string[] }) {
     [loaded],
   )
 
-  if (!runIds.length) return null
-  if (loading && !loaded.length) return <div className="card muted">불러오는 중…</div>
+  if (!runIds.length) {
+    return <EmptyState title="비교할 실행을 고르세요" description="왼쪽 목록에서 체크박스로 두 개 이상 선택합니다." />
+  }
+
+  if (loading && !loaded.length) {
+    return (
+      <div className="card">
+        <h3>실행 비교</h3>
+        <SkeletonRows rows={4} />
+      </div>
+    )
+  }
 
   return (
     <>
+      {failed.length > 0 && (
+        <div className="card error small">
+          {failed.length}개 실행을 불러오지 못했습니다 (지워졌을 수 있습니다): <span className="mono">{failed.join(', ')}</span>
+        </div>
+      )}
+
       <div className="card">
-        <h3 className="row" style={{ gap: 8 }}>
-          실행 비교 ({loaded.length}개)
+        <div className="card-head">
+          <h3>실행 비교 ({loaded.length}개)</h3>
+          <label className="sr-only" htmlFor="compare-metric">
+            비교할 지표
+          </label>
           <select
-            style={{ width: 140, marginLeft: 'auto' }}
+            id="compare-metric"
+            className="spacer"
+            style={{ width: 140 }}
             value={metric}
             onChange={(e) => setMetric(e.target.value as (typeof METRICS)[number])}
           >
             {METRICS.map((m) => (
-              <option key={m} value={m}>{m}</option>
+              <option key={m} value={m}>
+                {m}
+              </option>
             ))}
           </select>
-        </h3>
+        </div>
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-            <CartesianGrid stroke="#232833" />
-            <XAxis dataKey="epoch" {...AXIS} />
-            <YAxis domain={[0, 1]} {...AXIS} />
-            <Tooltip contentStyle={TOOLTIP_STYLE} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            {loaded.map((l, i) => (
+            <CartesianGrid stroke={chartGrid.stroke} />
+            <XAxis dataKey="epoch" stroke={chartAxis.stroke} tick={chartAxis.tick} tickLine={chartAxis.tickLine} />
+            <YAxis domain={[0, 1]} stroke={chartAxis.stroke} tick={chartAxis.tick} tickLine={chartAxis.tickLine} />
+            <Tooltip contentStyle={chartTooltip.contentStyle} labelStyle={chartTooltip.labelStyle} />
+            <Legend wrapperStyle={chartLegend.wrapperStyle} />
+            {loaded.map((l) => (
               <Line
                 key={l.run.id}
                 type="monotone"
                 dataKey={l.run.id}
                 name={l.run.name}
-                stroke={COLORS[i % COLORS.length]}
+                stroke={seriesColor(runIds.indexOf(l.run.id))}
                 dot={false}
                 strokeWidth={1.8}
                 isAnimationActive={false}
@@ -150,13 +173,23 @@ export function CompareView({ runIds }: { runIds: string[] }) {
         </ResponsiveContainer>
 
         <table style={{ marginTop: 8 }}>
+          <caption className="sr-only">실행별 최고 mAP50-95</caption>
           <thead>
-            <tr><th>실행</th><th>최고 mAP50-95</th><th>에폭</th></tr>
+            <tr>
+              <th scope="col">실행</th>
+              <th scope="col">최고 mAP50-95</th>
+              <th scope="col">에폭</th>
+            </tr>
           </thead>
           <tbody>
-            {best.map((b, i) => (
+            {best.map((b) => (
               <tr key={b.id}>
-                <td><span style={{ color: COLORS[i % COLORS.length] }}>■</span> {b.name}</td>
+                <td>
+                  <span style={{ color: seriesColor(runIds.indexOf(b.id)) }} aria-hidden="true">
+                    ■
+                  </span>{' '}
+                  {b.name}
+                </td>
                 <td>{b.value < 0 ? '-' : b.value.toFixed(4)}</td>
                 <td className="muted">{b.epoch || '-'}</td>
               </tr>
@@ -173,11 +206,14 @@ export function CompareView({ runIds }: { runIds: string[] }) {
           <p className="muted small">설정이 완전히 동일합니다.</p>
         ) : (
           <table>
+            <caption className="sr-only">값이 서로 다른 파라미터. 첫 실행과 다른 값은 강조 표시된다.</caption>
             <thead>
               <tr>
-                <th>파라미터</th>
-                {loaded.map((l, i) => (
-                  <th key={l.run.id} style={{ color: COLORS[i % COLORS.length] }}>{l.run.name}</th>
+                <th scope="col">파라미터</th>
+                {loaded.map((l) => (
+                  <th key={l.run.id} scope="col" style={{ color: seriesColor(runIds.indexOf(l.run.id)) }}>
+                    {l.run.name}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -186,7 +222,10 @@ export function CompareView({ runIds }: { runIds: string[] }) {
                 <tr key={d.key}>
                   <td className="mono">{d.key}</td>
                   {d.values.map((v, i) => (
-                    <td key={i} className="mono">{v.length > 40 ? `…${v.slice(-38)}` : v}</td>
+                    // 기준(첫 실행)과 다른 칸만 강조한다. 다 칠하면 어디가 기준인지 사라진다.
+                    <td key={i} className={`mono ${i > 0 && v !== d.values[0] ? 'diff' : ''}`}>
+                      {v.length > 40 ? `…${v.slice(-38)}` : v}
+                    </td>
                   ))}
                 </tr>
               ))}

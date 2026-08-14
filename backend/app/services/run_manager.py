@@ -634,6 +634,10 @@ async def scheduler_loop() -> None:
         try:
             reap()
             schedule()
+            # 순환 import 회피: anomaly 는 run_manager 를 쓰므로 여기서 늦게 가져온다.
+            from app.services import anomaly
+
+            anomaly.scan()
         except Exception:  # 스케줄러는 어떤 경우에도 죽으면 안 된다
             import traceback
 

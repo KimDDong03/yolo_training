@@ -130,10 +130,33 @@ export function RunHeader({ run, stream, onStop }: Props) {
         <Stat label="경과 시간" value={stats.elapsed == null ? '-' : formatDuration(stats.elapsed)} />
       </dl>
 
+      <Warnings stream={stream} />
+
       {/* 실패한 run 의 오류는 아래 FailureCard 가 원인·처방과 함께 보여준다(원문은 거기 접혀 있다).
           여기서 또 뿌리면 같은 문장이 두 번 나온다. */}
       {run.error && run.status !== 'failed' && <div className="error small">{run.error}</div>}
     </header>
+  )
+}
+
+/**
+ * 학습 중에 백엔드가 발견한 이상.
+ *
+ * 판정도 문장도 서버가 만든다. 여기는 렌더링만 한다 — 기준을 고칠 때 프론트를 다시
+ * 빌드해 반입하지 않아도 되고, 사후 진단(FailureCard)과 같은 규칙을 쓰게 된다.
+ */
+function Warnings({ stream }: { stream: StreamState }) {
+  const warnings = stream.events.filter((e) => e.t === 'warning')
+  if (!warnings.length) return null
+  return (
+    <div className="stack" style={{ gap: 4 }}>
+      {warnings.map((w) => (
+        <div key={w.code ?? w.ts} className={`help ${w.severity === 'info' ? '' : 'warn'}`}>
+          <strong className={w.severity === 'critical' ? 'error' : undefined}>{w.message}</strong>
+          {w.hint && <span className="muted"> {w.hint}</span>}
+        </div>
+      ))}
+    </div>
   )
 }
 

@@ -7,11 +7,30 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
+import time
 
 _QUERY = "index,name,memory.total,memory.used,utilization.gpu"
 
+# 화면이 2초마다 GPU 를 폴링하는데 이상 감지 감시자도 따로 물어본다.
+# 캐시가 없으면 nvidia-smi 프로세스를 두 배로 띄우게 된다. 사용률은 1초 낡아도 무해하다.
+CACHE_TTL_S = 1.0
+_cache_lock = threading.Lock()
+_cache: tuple[float, list[dict[str, object]]] | None = None
+
 
 def list_gpus() -> list[dict[str, object]]:
+    global _cache
+    with _cache_lock:
+        if _cache is not None and time.monotonic() - _cache[0] < CACHE_TTL_S:
+            return _cache[1]
+    gpus = _query_gpus()
+    with _cache_lock:
+        _cache = (time.monotonic(), gpus)
+    return gpus
+
+
+def _query_gpus() -> list[dict[str, object]]:
     exe = shutil.which("nvidia-smi")
     if not exe:
         return []

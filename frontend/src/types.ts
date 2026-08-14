@@ -259,8 +259,13 @@ export interface TrainEvent {
   /** NaN/Inf 라서 값을 싣지 못한 지표 키. 값 대신 사실만 남긴다. */
   nonfinite?: string[]
   loss_nan?: boolean
-  /** t === 'warning' 일 때의 사람이 읽는 문장. */
+  /** t === 'warning' 일 때의 사람이 읽는 문장. 판정도 문장도 백엔드가 만든다. */
   message?: string
+  /** 경고 종류. run 당 code 하나만 나온다. */
+  code?: string
+  severity?: 'info' | 'warn' | 'critical'
+  /** 그래서 무엇을 하라는 한 줄. */
+  hint?: string
 }
 
 export interface Artifacts {

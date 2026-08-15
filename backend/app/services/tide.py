@@ -32,6 +32,9 @@ T_BG = 0.1
 CONFUSION_CONF = 0.25
 # 혼동 쌍을 몇 쌍까지 보여줄 것인가. 전부 나열하면 무엇이 문제인지 되레 안 보인다.
 CONFUSION_CAP = 5
+# 고쳐서 이만큼도 못 올리면 처방하지 않는다. 남은 오차가 거의 없는 모델에서도 무언가는
+# 1등이라, 비중만 보면 mAP50 0.95 짜리 모델에 "학습이 부족합니다" 를 띄우게 된다.
+MIN_ACTIONABLE_DAP = 0.02
 
 # 화면에 싣는 순서. 판정 순서(_classify_one)와는 다르다.
 ERROR_KINDS = ("cls", "loc", "both", "dupe", "bkg", "miss")
@@ -66,7 +69,8 @@ ADVICE = {
 
 NOTE = (
     "각 값은 그 오류만 고쳤을 때의 mAP50 상승분입니다. 오류끼리 겹치기 때문에 여섯 값을 "
-    "더해도 남은 오차 전체가 되지는 않습니다."
+    "더해도 남은 오차 전체가 되지는 않습니다. 건수는 배포 임계값에서 실제로 보이는 것을 "
+    "세었고, 괄호 안은 점수 계산에 쓰인 전체 검출 기준입니다."
 )
 
 
@@ -269,6 +273,22 @@ def _counts(dets: dict, gts: dict) -> dict[str, int]:
     return counts
 
 
+def _counts_at(dets: dict, conf: float) -> dict[str, int | None]:
+    """배포 임계값에서 실제로 눈에 보이는 건수.
+
+    분해는 conf 0.001 로 모은 예측 전부를 쓴다. AP 를 재려면 그래야 하지만, 그 건수를
+    그대로 보여 주면 "중복 검출 457건" 처럼 읽혀 멀쩡한 모델을 고치러 가게 만든다.
+    실제로 배포할 임계값에서 몇 건인지가 사용자가 알아야 할 숫자다.
+    """
+    visible = dets["conf"] >= conf
+    counts: dict[str, int | None] = {
+        kind: int(((dets["err"] == code) & visible).sum()) for kind, code in _CODES.items()
+    }
+    # 임계값을 올리면 놓침은 오히려 늘어난다. 같은 분류 결과로는 셀 수 없으므로 비워 둔다.
+    counts["miss"] = None
+    return counts
+
+
 def _per_class_counts(dets: dict, gts: dict, names: dict[int, str]) -> list[dict[str, Any]]:
     """클래스별 오류 건수.
 
@@ -311,6 +331,7 @@ def error_breakdown(
     names: dict[int, str],
     collection_conf: float = 0.001,
     classified: tuple[dict, dict] | None = None,
+    deploy_conf: float = 0.25,
 ) -> dict[str, Any]:
     """report.json 의 "tide" 에 그대로 들어가는 값.
 
@@ -324,6 +345,7 @@ def error_breakdown(
     dets, gts = classified if classified is not None else classify(records, 0.0)
     baseline = _evaluate(dets["cls"], dets["conf"], dets["tp"], gts["cls"])
     counts = _counts(dets, gts)
+    counts_at = _counts_at(dets, deploy_conf)
 
     errors = []
     for kind in ERROR_KINDS:
@@ -346,9 +368,12 @@ def error_breakdown(
                 "kind": kind,
                 "label": LABELS[kind],
                 "count": counts[kind],
+                "count_at_conf": counts_at[kind],
                 "dap": _round(delta),
                 "dap_naive": _round(naive),
                 "dropped_classes": dropped,
+                # 상승분이 미미한데 처방을 띄우면 멀쩡한 모델을 고치러 가게 된다.
+                "actionable": delta >= MIN_ACTIONABLE_DAP,
                 "advice": ADVICE[kind],
             }
         )
@@ -362,6 +387,7 @@ def error_breakdown(
         "baseline_classes": sorted(baseline),
         "params": {
             "collection_conf": collection_conf,
+            "deploy_conf": round(float(deploy_conf), 5),
             "t_fg": T_FG,
             "t_bg": T_BG,
             "metric": "mAP50",

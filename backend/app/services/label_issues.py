@@ -189,7 +189,8 @@ def build(
                                 f"이 사진에는 {names.get(cls, cls)} 정답이 {int(same.sum())}개 "
                                 f"있고 모델이 그중 {hits}개를 맞췄습니다. 그런데 라벨이 없는 "
                                 f"이 자리도 {names.get(cls, cls)} 로 신뢰도 {conf:.2f} 에 "
-                                f"검출했습니다. 라벨을 빠뜨린 자리일 수 있습니다."
+                                f"검출했습니다. 라벨을 빠뜨린 자리이거나, 학습 클래스에 없는 "
+                                f"다른 물체를 {names.get(cls, cls)} 로 잘못 본 것입니다."
                             ),
                         })
                     elif not same.any() and conf >= VERY_HIGH_CONF:

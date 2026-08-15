@@ -158,6 +158,24 @@ class BreakdownTest(unittest.TestCase):
         counts = {e["kind"]: e["count"] for e in tide.error_breakdown(fixture_a(), NAMES)["errors"]}
         self.assertEqual(counts, {"cls": 2, "loc": 1, "both": 1, "dupe": 1, "bkg": 1, "miss": 1})
 
+    def test_counts_at_the_deployment_threshold_leave_out_the_noise(self) -> None:
+        """conf 0.001 전량을 세면 잡음이 수백 건으로 읽혀 멀쩡한 모델을 고치러 가게 된다."""
+        report = tide.error_breakdown(fixture_a(), NAMES, deploy_conf=0.7)
+        seen = {e["kind"]: e["count_at_conf"] for e in report["errors"]}
+        # 0.7 이상은 dupe(.85) 와 cls(.95) 하나씩, bkg(.88). loc(.75) 은 남고 both(.65) 는 빠진다.
+        self.assertEqual(seen["dupe"], 1)
+        self.assertEqual(seen["both"], 0)
+        self.assertEqual(seen["cls"], 1)  # .95 는 남고 .55 는 빠진다
+        self.assertEqual(seen["loc"], 1)
+        self.assertEqual(report["params"]["deploy_conf"], 0.7)
+
+    def test_missed_ground_truth_has_no_count_at_the_threshold(self) -> None:
+        """임계값을 올리면 놓침은 오히려 늘어난다. 같은 분류로는 셀 수 없으니 비워 둔다."""
+        report = tide.error_breakdown(fixture_a(), NAMES, deploy_conf=0.7)
+        miss = [e for e in report["errors"] if e["kind"] == "miss"][0]
+        self.assertIsNone(miss["count_at_conf"])
+        self.assertEqual(miss["count"], 1)
+
     def test_vanished_class_is_dropped_from_both_averages(self) -> None:
         """놓침을 고치면 정답이 하나도 안 남는 클래스가 생긴다. 분모가 줄면 상승분이 부풀려진다."""
         report = tide.error_breakdown(
@@ -177,6 +195,13 @@ class BreakdownTest(unittest.TestCase):
         )
         self.assertAlmostEqual(report["baseline_map50"], 0.495, places=5)
         self.assertAlmostEqual(deltas(report)["cls"], 0.333333, places=5)
+
+    def test_negligible_gains_are_not_marked_actionable(self) -> None:
+        """상승분이 미미한 유형까지 처방을 띄우면 좋은 모델을 고치러 가게 된다."""
+        report = tide.error_breakdown(fixture_a(), NAMES)
+        actionable = {e["kind"] for e in report["errors"] if e["actionable"]}
+        # cls(+0.264) 와 loc(+0.165) 만 손댈 값어치가 있다. dupe/bkg(+0.017) 는 아니다.
+        self.assertEqual(actionable, {"cls", "loc"})
 
     def test_shares_add_up_over_the_positive_deltas(self) -> None:
         report = tide.error_breakdown(fixture_a(), NAMES)

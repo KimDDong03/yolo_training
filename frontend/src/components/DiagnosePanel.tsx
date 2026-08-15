@@ -154,7 +154,9 @@ function LabelIssueCard({
 function TideCard({ tide }: { tide: TideBreakdown }) {
   const rows = [...tide.errors].sort((a, b) => (b.dap ?? 0) - (a.dap ?? 0))
   const worst = Math.max(...rows.map((r) => r.dap ?? 0), 0)
-  const advice = rows.filter((r) => (r.dap ?? 0) > 0).slice(0, 3)
+  // 상승분이 미미한 유형까지 처방을 띄우면 mAP50 0.95 짜리 모델에도 "학습이 부족합니다"
+  // 가 뜬다. 고쳐서 얻을 게 있는지는 서버가 판정한다.
+  const advice = rows.filter((r) => r.actionable).slice(0, 3)
 
   return (
     <div className="card">
@@ -183,15 +185,22 @@ function TideCard({ tide }: { tide: TideBreakdown }) {
                 </div>
               </td>
               <td>{pct(row.dap)}</td>
-              <td>{row.count}</td>
+              {/* 전체 검출 기준 건수를 앞에 두면 conf 0.001 짜리 잡음이 수백 건으로
+                  읽혀 멀쩡한 모델을 고치러 가게 된다. 배포 임계값에서 보이는 수가 먼저다. */}
+              <td>
+                {row.count_at_conf ?? row.count}
+                {row.count_at_conf != null && row.count_at_conf !== row.count && (
+                  <span className="muted"> ({row.count})</span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
       {advice.length === 0 ? (
         <p className="help" style={{ marginTop: 'var(--sp-3)' }}>
-          어떤 유형을 고쳐도 mAP50 이 오르지 않습니다. 특정 오류를 손볼 단계가 아니라 모델이
-          아직 제대로 학습되지 않은 상태입니다.
+          어느 유형을 고쳐도 mAP50 이 의미 있게 오르지 않습니다. 특정 오류를 손볼 단계가
+          아니니 위 '다음에 할 일' 을 보세요.
         </p>
       ) : (
         advice.map((row) => (

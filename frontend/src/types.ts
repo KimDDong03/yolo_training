@@ -216,7 +216,10 @@ export type TideKind = 'cls' | 'loc' | 'both' | 'dupe' | 'bkg' | 'miss'
 export interface TideError {
   kind: TideKind
   label: string
+  /** 점수 계산에 쓰인 전체 검출 기준 건수. conf 0.001 짜리 잡음이 대부분이다. */
   count: number
+  /** 배포 임계값에서 실제로 보이는 건수. 놓침은 이 기준으로 셀 수 없어 null 이다. */
+  count_at_conf: number | null
   /** 이 유형만 고쳤을 때의 mAP50 상승분. 무엇부터 손댈지가 이 값의 크기 순이다. */
   dap: number | null
   /** 분모 보정 전 값. 진단용이라 화면에는 쓰지 않는다. */
@@ -225,6 +228,8 @@ export interface TideError {
   dropped_classes: number[]
   /** 양수 상승분 합에서 이 유형이 차지하는 비율. 전부 0 이면 null. */
   share: number | null
+  /** 고쳐서 얻을 게 실제로 있는가. false 면 처방을 띄우지 않는다. */
+  actionable: boolean
   advice: string
 }
 
@@ -233,7 +238,13 @@ export interface TideBreakdown {
   /** 이 분석 자체의 매칭 기준. overall.map50 과 미세하게 다를 수 있다. */
   baseline_map50: number | null
   baseline_classes: number[]
-  params: { collection_conf: number; t_fg: number; t_bg: number; metric: string }
+  params: {
+    collection_conf: number
+    deploy_conf: number
+    t_fg: number
+    t_bg: number
+    metric: string
+  }
   errors: TideError[]
   per_class_counts: { cls: number; name: string; counts: Record<TideKind, number> }[]
   confusion_pairs: { pred: string; gt: string; count: number }[]

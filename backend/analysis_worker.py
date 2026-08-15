@@ -118,7 +118,9 @@ def main() -> int:
             # 분류는 한 번만 한다. 두 화면이 서로 다른 판정을 보여 주면 안 된다.
             classified = tide.classify(records)
             breakdown = tide.error_breakdown(
-                records, names, collection_conf=0.001, classified=classified
+                records, names, collection_conf=0.001, classified=classified,
+                # 건수는 실제로 배포할 임계값에서 세야 의미가 있다. 갤러리와 같은 값을 쓴다.
+                deploy_conf=gallery_conf,
             )
             issues = label_issues.build(
                 records, *classified, names, table, overall,

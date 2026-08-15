@@ -16,11 +16,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from app.services import tide
+
 # 넷 이상 늘어놓으면 우선순위가 사라져 아무것도 안 하게 된다.
 ACTION_CAP = 3
 # 한 유형이 전체 손실의 이만큼을 차지하면 "지배적" 이라고 부른다.
 DOMINANT_SHARE = 0.35
 DOMINANT_SHARE_SOFT = 0.30
+# "고쳐서 얻을 게 있는가" 의 기준은 오류 분해와 같은 값을 써야 한다. 두 화면이 서로 다른
+# 선을 쓰면 카드 하나는 "에폭을 늘리세요", 다른 하나는 "고칠 것 없습니다" 가 된다.
+MIN_ACTIONABLE_DAP = tide.MIN_ACTIONABLE_DAP
 # 이보다 나쁘면 어떤 오류가 많은지 따지는 게 의미가 없다.
 MIN_USABLE_MAP50 = 0.10
 # 추론 화면 기본값. 여기서 이만큼 떨어져 있으면 알려 준다.
@@ -60,6 +65,11 @@ def _context(report: dict[str, Any]) -> dict[str, Any]:
     errors = tide.get("errors") or [] if not tide.get("failed") else []
     dap = {e["kind"]: (e.get("dap") or 0.0) for e in errors}
     count = {e["kind"]: int(e.get("count") or 0) for e in errors}
+    # 배포 임계값에서 실제로 보이는 건수. 없는(예전) 리포트면 전체 건수로 물러선다.
+    seen = {
+        e["kind"]: int(e["count_at_conf"] if e.get("count_at_conf") is not None else (e.get("count") or 0))
+        for e in errors
+    }
     total = sum(v for v in dap.values() if v > 0)
     dominant = max(dap, key=lambda k: dap[k]) if total > 0 else None
 
@@ -80,8 +90,10 @@ def _context(report: dict[str, Any]) -> dict[str, Any]:
         "conf": recommendation.get("conf"),
         "dap": dap,
         "count": count,
+        "seen": seen,
         "dominant": dominant,
         "dominant_share": (dap[dominant] / total) if dominant else 0.0,
+        "dominant_value": dap[dominant] if dominant else 0.0,
         "weak_named": weak,
         "label_total": label_total,
         "label_usable": bool(labels.get("available")) and bool(labels.get("model_evidence")),
@@ -94,7 +106,7 @@ def _context(report: dict[str, Any]) -> dict[str, Any]:
         "conf_s": _fmt(recommendation.get("conf"), 2),
         "dominant_dap": _fmt(dap.get(dominant) if dominant else None),
         "dominant_pct": f"{(dap[dominant] / total) * 100:.0f}" if dominant else "-",
-        "dupe_count": count.get("dupe", 0),
+        "dupe_count": seen.get("dupe", 0),
         "label_count": label_total,
         "label_pct": f"{(label_total / instances) * 100:.0f}" if instances else "-",
         "weak_names": ", ".join(weak) if weak else "-",
@@ -104,7 +116,12 @@ def _context(report: dict[str, Any]) -> dict[str, Any]:
 
 
 def _is(kind: str, floor: float = DOMINANT_SHARE_SOFT) -> Callable[[dict[str, Any]], bool]:
-    return lambda c: c["dominant"] == kind and c["dominant_share"] >= floor
+    """이 유형이 지배적이고, 고쳐서 얻을 게 실제로 있는가."""
+    return lambda c: (
+        c["dominant"] == kind
+        and c["dominant_share"] >= floor
+        and c["dominant_value"] >= MIN_ACTIONABLE_DAP
+    )
 
 
 ACTIONS: list[Action] = [
@@ -217,8 +234,9 @@ ACTIONS: list[Action] = [
     Action(
         "dupe_notable",
         "info",
-        lambda c: c["dap"].get("dupe", 0) >= 0.01
-        or c["count"].get("dupe", 0) >= max(10, c["instances"] * 0.05),
+        # 전체 검출 기준으로 세면 conf 0.001 짜리 잡음이 수백 건 잡혀 멀쩡한 모델에도 뜬다.
+        lambda c: c["dap"].get("dupe", 0) >= MIN_ACTIONABLE_DAP
+        or c["seen"].get("dupe", 0) >= max(10, c["instances"] * 0.05),
         "같은 물체를 두 번 잡습니다",
         "중복 검출이 {dupe_count}건 있습니다. 한 물체에 박스가 여러 개 붙으면 개수를 세는 "
         "용도에서는 그대로 틀린 답이 됩니다.",
@@ -245,22 +263,35 @@ ACTIONS: list[Action] = [
         "위 '클래스별 성능' 표의 안내를 따르세요. 인스턴스가 적으면 데이터를 늘리는 것이, "
         "충분한데도 낮으면 라벨 기준을 통일하는 것이 먼저입니다.",
     ),
-    Action(
-        "looks_healthy",
-        "info",
-        lambda c: True,
-        "뚜렷하게 지배적인 오류 유형이 없습니다",
-        "mAP50 {map50_s}, 오류가 특정 유형에 몰려 있지 않습니다. 한 가지를 고쳐서 크게 "
-        "오르는 상태가 아닙니다.",
-        "지금 성능으로 충분한지는 용도가 정합니다. 더 올리려면 데이터를 늘리는 것이 가장 "
-        "확실하고, 그다음이 더 큰 모델(yolo11s 등)입니다.",
-    ),
 ]
+
+# 손볼 곳을 짚어 주는 처방(warn 이상)이 하나도 없을 때만 낸다. "고칠 게 없다" 는 판단이라
+# 다른 처방과 나란히 두면 서로를 부정한다.
+FALLBACK = Action(
+    "looks_healthy",
+    "info",
+    lambda c: True,
+    "지금 크게 고칠 것은 없습니다",
+    "mAP50 {map50_s}, 오류가 특정 유형에 몰려 있지 않고 어느 하나를 고쳐도 상승분이 "
+    "미미합니다. 한 가지를 손봐서 크게 오르는 상태가 아닙니다.",
+    "지금 성능으로 충분한지는 용도가 정합니다. 더 올리려면 데이터를 늘리는 것이 가장 "
+    "확실하고, 그다음이 더 큰 모델(yolo11s 등)입니다.",
+)
 
 
 def build(report: dict[str, Any]) -> list[dict[str, Any]]:
     """report.json 딕셔너리만 보고 처방을 만든다. 파일 I/O 없음."""
     context = _context(report)
+
+    def render(action: Action) -> dict[str, Any]:
+        return {
+            "code": action.code,
+            "severity": action.severity,
+            "title": action.title.format_map(_Safe(context)),
+            "cause": action.cause.format_map(_Safe(context)),
+            "fix": action.fix.format_map(_Safe(context)),
+        }
+
     out: list[dict[str, Any]] = []
     for action in ACTIONS:
         try:
@@ -270,16 +301,12 @@ def build(report: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         if not hit:
             continue
-        rendered = {
-            "code": action.code,
-            "severity": action.severity,
-            "title": action.title.format_map(_Safe(context)),
-            "cause": action.cause.format_map(_Safe(context)),
-            "fix": action.fix.format_map(_Safe(context)),
-        }
         if action.terminal:
-            return [rendered]
-        out.append(rendered)
+            return [render(action)]
+        out.append(render(action))
         if len(out) >= ACTION_CAP:
             break
-    return out
+
+    if not any(a["severity"] in ("critical", "warn") for a in out):
+        out.append(render(FALLBACK))
+    return out[:ACTION_CAP]

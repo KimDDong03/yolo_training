@@ -46,6 +46,7 @@ def breakdown(dominant: str, dap: float = 0.20, rest: float = 0.01, **counts) ->
                 "kind": k,
                 "dap": dap if k == dominant else rest,
                 "count": counts.get(k, 5),
+                "count_at_conf": counts.get(f"{k}_seen", counts.get(k, 5)),
             }
             for k in kinds
         ],
@@ -121,6 +122,13 @@ class DominantErrorTest(unittest.TestCase):
         even = breakdown("miss", dap=0.05, rest=0.045)
         self.assertNotIn("miss_dominant", codes(next_actions.build(report(tide=even))))
 
+    def test_a_dominant_share_of_almost_nothing_is_not_worth_a_prescription(self) -> None:
+        """mAP50 0.95 짜리 모델에도 무언가는 1등이다. 비중만 보면 '학습이 부족합니다' 가 뜬다."""
+        tiny = breakdown("both", dap=0.009, rest=0.002)
+        actions = next_actions.build(report(map50=0.95, tide=tiny))
+        self.assertNotIn("both_dominant", codes(actions))
+        self.assertIn("looks_healthy", codes(actions))
+
 
 class PriorityTest(unittest.TestCase):
     def test_labels_outrank_the_error_type_prescription(self) -> None:
@@ -174,6 +182,27 @@ class PriorityTest(unittest.TestCase):
             "one_weak_class",
             codes(next_actions.build(report(tide=breakdown("miss"), worst=weak))),
         )
+
+
+class DuplicateTest(unittest.TestCase):
+    def test_noise_below_the_deployment_threshold_is_not_a_problem(self) -> None:
+        """중복 457건 중 배포 임계값에서 보이는 게 2건이면 NMS 를 만질 이유가 없다."""
+        noisy = breakdown("miss", dap=0.001, rest=0.001, dupe=457, dupe_seen=2)
+        self.assertNotIn("dupe_notable", codes(next_actions.build(report(tide=noisy))))
+
+    def test_duplicates_visible_at_the_deployment_threshold_are_reported(self) -> None:
+        real = breakdown("miss", dap=0.001, rest=0.001, dupe=457, dupe_seen=120)
+        action = [
+            a for a in next_actions.build(report(tide=real)) if a["code"] == "dupe_notable"
+        ][0]
+        self.assertIn("120", action["cause"])
+
+    def test_an_old_report_without_the_threshold_count_falls_back(self) -> None:
+        old = {
+            "errors": [{"kind": "dupe", "dap": 0.0, "count": 300}],
+            "confusion_pairs": [],
+        }
+        self.assertIn("dupe_notable", codes(next_actions.build(report(tide=old))))
 
 
 class ConfidenceTest(unittest.TestCase):

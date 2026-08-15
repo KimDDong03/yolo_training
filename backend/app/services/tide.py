@@ -13,6 +13,9 @@ IoU 재계산 없이 tp/conf/pred_cls/target_cls 배열 편집으로 표현되�
 분류 순서와 IoU 마스크는 TIDE 원본(tidecv/quantify.py)을 그대로 따른다. 순서를 바꾸면
 판정이 달라진다 — 예를 들어 "이미 잡힌 같은 클래스 정답과 0.6, 아직 안 잡힌 다른 클래스
 정답과 0.9" 인 예측은 중복이 아니라 클래스 오류이고, 둘은 처방이 정반대다.
+
+마스크도 마찬가지다. 원본에서 "이미 잡혔는가" 를 따지는 것은 중복 검사 하나뿐이고
+(gt_used_cls), 위치·클래스 검사는 정답 전체를 본다(gt_cls_iou, gt_noncls_iou).
 """
 
 from __future__ import annotations
@@ -91,17 +94,22 @@ def _best(row: np.ndarray, mask: np.ndarray) -> tuple[float, int]:
 
 
 def _classify_one(
-    row: np.ndarray, unused_same: np.ndarray, unused_diff: np.ndarray, used_same: np.ndarray
+    row: np.ndarray, same: np.ndarray, used_same: np.ndarray
 ) -> tuple[str, int]:
     """짝을 못 지은 예측 하나를 유형과 근거 정답으로 판정한다.
 
     순서가 곧 우선순위다(TIDE 원본과 같다). 위에서 먼저 걸리는 것이 이긴다.
+
+    위치·클래스 검사는 **이미 다른 예측이 가져간 정답까지 포함해서** 본다. 원본에서
+    "점유됨" 을 따지는 것은 중복 검사 하나뿐이다(gt_used_cls). 여기에 미점유 조건을
+    걸면 재현율이 높은 모델에서 위치 오류가 거의 발화하지 못하고 전부 catch-all 로
+    쏠린다 — 실제로 두 데이터셋에서 loc 6건 대 both 753건이 나왔다.
     """
-    iou, index = _best(row, unused_same)
+    iou, index = _best(row, same)
     if T_BG <= iou <= T_FG:
         return "loc", index  # 맞는 종류인데 박스만 어긋났다
 
-    iou, index = _best(row, unused_diff)
+    iou, index = _best(row, ~same)
     if iou >= T_FG:
         return "cls", index  # 박스는 물체에 맞는데 종류를 틀렸다
 
@@ -157,9 +165,7 @@ def classify(records: list[dict[str, Any]], conf: float = 0.0) -> tuple[dict, di
                 kind, gt_index = "bkg", -1
             else:
                 same = gt_cls == p_cls[pi]
-                kind, gt_index = _classify_one(
-                    ious[pi], same & ~taken, ~same & ~taken, same & taken
-                )
+                kind, gt_index = _classify_one(ious[pi], same, same & taken)
                 # 이 정답은 "설명된" 것이다. 고치면 잡히므로 놓침으로 세지 않는다.
                 if kind in ("loc", "cls") and gt_index >= 0:
                     covered[gt_index] = True
@@ -258,8 +264,8 @@ def _fixed_arrays(dets: dict, gts: dict, kind: str) -> tuple:
         if kind == "cls":
             det_cls[row] = gts["cls"][target]
         if target in claimed:
-            # 고쳐 봐야 중복이 된다. 여전히 오검출이므로 지우지 않고 남긴다 —
-            # 지우면 정밀도를 깎지 않게 되어 상승분이 부풀려진다.
+            # 근거 정답을 이미 다른 예측이 가져갔다. 고쳐 봐야 중복이 되므로 여전히
+            # 오검출이다. 지우면 정밀도를 깎지 않게 되어 상승분이 부풀려진다.
             det_tp[row] = False
         else:
             claimed.add(target)

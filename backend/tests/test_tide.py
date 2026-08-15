@@ -93,12 +93,13 @@ class ClassifyTest(unittest.TestCase):
         for row in np.flatnonzero(dets["err"] == tide._CODES["dupe"]):
             self.assertTrue(gts["taken"][dets["gt"][row]])
 
-    def test_class_and_box_errors_always_point_at_a_free_ground_truth(self) -> None:
-        """이 불변식이 깨지면 fix 의 claim 절차가 의미를 잃는다."""
+    def test_class_and_box_errors_always_name_a_ground_truth(self) -> None:
+        """고칠 대상이 없으면 fix 가 성립하지 않는다. 이미 잡힌 정답을 가리킬 수도 있다."""
         dets, gts = tide.classify(fixture_a())
         for kind in ("cls", "loc"):
             for row in np.flatnonzero(dets["err"] == tide._CODES[kind]):
-                self.assertFalse(gts["taken"][dets["gt"][row]])
+                self.assertGreaterEqual(int(dets["gt"][row]), 0)
+                self.assertLess(int(dets["gt"][row]), len(gts["cls"]))
 
     def test_best_iou_counts_matched_predictions_too(self) -> None:
         """놓침 판정은 못 맞춘 예측만 보지만, 라벨 오류 후보는 전부를 봐야 한다."""
@@ -121,14 +122,24 @@ class ClassificationOrderTest(unittest.TestCase):
         )
         self.assertEqual(int(dets["err"][1]), tide._CODES["cls"])
 
-    def test_overlap_with_a_claimed_box_is_not_a_localisation_error(self) -> None:
-        """미점유 정답이 없으면 위치 오류가 될 수 없다. 나머지는 전부 both 다."""
+    def test_a_loose_box_on_a_claimed_ground_truth_is_still_a_localisation_error(self) -> None:
+        """원본에서 '이미 잡혔는가' 를 보는 건 중복 검사뿐이다.
+
+        여기에 미점유 조건을 걸면 재현율 높은 모델에서 위치 오류가 발화하지 못하고
+        전부 catch-all 로 쏠린다 (실측: loc 6건 대 both 753건).
+        """
         taken_box = [0.0, 0.0, 100.0, 30.0]  # 아래 예측과 IoU 0.3
         wide = [0.0, 0.0, 100.0, 100.0]
         dets, _ = tide.classify(
             [record("x.jpg", [(0, taken_box)], [(0, 0.95, taken_box), (0, 0.90, wide)])]
         )
-        self.assertEqual(int(dets["err"][1]), tide._CODES["both"])
+        self.assertEqual(int(dets["err"][1]), tide._CODES["loc"])
+
+    def test_a_loose_box_with_no_same_class_ground_truth_falls_through_to_both(self) -> None:
+        near = [0.0, 0.0, 100.0, 30.0]  # 아래 예측과 IoU 0.3, 다른 클래스
+        wide = [0.0, 0.0, 100.0, 100.0]
+        dets, _ = tide.classify([record("x.jpg", [(1, near)], [(0, 0.90, wide)])])
+        self.assertEqual(int(dets["err"][0]), tide._CODES["both"])
 
 
 def deltas(report: dict) -> dict[str, float]:

@@ -212,8 +212,11 @@ def build(
                         continue
                     if not _usable(rule, "precision", MIN_CLASS_PRECISION):
                         continue
-                    # 분류상 클래스 오류의 근거 정답은 항상 미매칭이다(tide 의 불변식).
                     truth = int(dets["gt"][row]) - g0
+                    # 그 정답을 다른 예측이 이미 제대로 맞췄다면 클래스 오기가 아니라
+                    # 그냥 중복 오검출이다.
+                    if gt_taken[truth]:
+                        continue
                     findings.append({
                         "image": image, "kind": "wrong_class", "cls": cls,
                         "conf": round(conf, 3), "iou": round(iou, 3), "score": conf * iou,

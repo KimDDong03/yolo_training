@@ -4,6 +4,7 @@ import type { Dataset, Gpu, ParamField, ParamSchema, Preset, SystemInfo, WeightC
 import type { LoadStatus } from '../useResource'
 import { DatasetRegister } from './DatasetRegister'
 import { DatasetReviewPanel } from './DatasetReviewPanel'
+import { QualityPanel } from './QualityPanel'
 import { useConfirm, usePrompt } from './ui/Dialog'
 import { Recommendations } from './Recommendations'
 import { Field, type FieldStatus } from './ui/Field'
@@ -331,7 +332,13 @@ export function NewRunPanel({
       </div>
 
       {/* 파라미터를 고르기 전에 봐야 하는 정보다 — 작은 객체가 대부분이면 imgsz 를 키워야 한다. */}
-      {dataset && showReview && <DatasetReviewPanel dataset={dataset} />}
+      {dataset && showReview && (
+        <>
+          <DatasetReviewPanel dataset={dataset} />
+          {/* 누수는 학습을 시작하기 전에 알아야 한다. 돌린 뒤에 알면 그 mAP 를 버리게 된다. */}
+          <QualityPanel dataset={dataset} />
+        </>
+      )}
 
       {dataset && schema && (
         <Recommendations

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Dataset, DatasetReview } from '../types'
 import { BoxOverlay, type OverlayBox } from './BoxOverlay'
+import { DatasetPathWarning } from './DatasetPathWarning'
 import { Modal } from './ui/Dialog'
 import { EmptyState } from './ui/EmptyState'
 
@@ -32,6 +33,8 @@ export function DatasetReviewPanel({ dataset }: { dataset: Dataset | null | unde
 
   return (
     <>
+      <DatasetPathWarning dataset={dataset} />
+
       <div className="card">
         <h3>검수 요약</h3>
         <table>

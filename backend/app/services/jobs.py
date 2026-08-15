@@ -162,6 +162,50 @@ register(
 )
 
 
+def _validate_quality(args: dict[str, Any]) -> dict[str, Any]:
+    # int(...) 를 그냥 부르면 "bad" 가 ValueError 로 새어 나가 422 가 아니라 500 이 된다.
+    try:
+        imgsz = int(args.get("imgsz", 224))
+    except (TypeError, ValueError) as exc:
+        raise JobError("이미지 크기는 숫자여야 합니다.") from exc
+    if not 64 <= imgsz <= 640:
+        raise JobError("이미지 크기는 64~640 이어야 합니다.")
+    return {
+        "imgsz": imgsz - imgsz % 32,
+        # analyze 와 같은 이유로 GPU 번호를 요청이 직접 고르지 못하게 한다.
+        "use_gpu": bool(args.get("use_gpu", False)),
+    }
+
+
+def _argv_quality(
+    owner: Path, directory: Path, args: dict[str, Any], devices: list[int]
+) -> list[str]:
+    # 원본 폴더(root) 는 넘기지 않는다 — 이미지 목록의 진실은 owner 폴더 안의
+    # train.txt / val.txt 다. quality_worker.py 첫머리 주석 참고.
+    return [
+        "--dataset-dir", str(owner),
+        "--out-dir", str(directory),
+        "--events", str(directory / "events.jsonl"),
+        "--imgsz", str(args["imgsz"]),
+        "--device", ",".join(str(d) for d in devices) if devices else "cpu",
+    ]
+
+
+register(
+    JobSpec(
+        kind="quality",
+        owner_type="dataset",
+        label="데이터 품질 검사",
+        script="quality_worker.py",
+        validate=_validate_quality,
+        # 분석 잡과 같은 정책: 사용자가 켜고 GPU 가 비었을 때만 쓴다. 못 잡으면 CPU.
+        needs_gpu=lambda args: args["use_gpu"],
+        build_argv=_argv_quality,
+        gpu_optional=True,
+    )
+)
+
+
 register(
     JobSpec(
         kind="export",

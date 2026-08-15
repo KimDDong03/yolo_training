@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse
 
 from app.core import db, fsops
 from app.services import (
+    dataset_ingest,
     diagnose_fail,
     event_stream,
     gpu,
@@ -52,7 +53,14 @@ def list_runs() -> list[dict[str, Any]]:
 def get_run(run_id: str) -> dict[str, Any]:
     run = _run_or_404(run_id)
     dataset = db.query_one("SELECT * FROM datasets WHERE id = ?", (run["dataset_id"],))
-    run["dataset"] = db.row_to_dataset(dataset) if dataset else None
+    if dataset is None:
+        run["dataset"] = None
+    else:
+        info = db.row_to_dataset(dataset)
+        # 진단 화면의 갤러리가 이 데이터셋의 사진을 연다. 경로가 낡았으면 사진이 전부
+        # 깨지는데, 사유가 없으면 "모델이 다 놓쳤다" 로 읽힌다.
+        info["path_status"] = dataset_ingest.path_status(info)
+        run["dataset"] = info
     return run
 
 
@@ -126,8 +134,27 @@ def analysis_report(run_id: str) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError) as exc:
         raise HTTPException(500, "진단 결과를 읽지 못했습니다.") from exc
     # 처방은 리포트에 굳히지 않고 여기서 얹는다 — 문구를 고치면 과거 리포트에도 바로 적용된다.
-    report["next_actions"] = next_actions.build(report)
+    report["next_actions"] = next_actions.build(report, _data_quality(report))
     return report
+
+
+def _data_quality(report: dict[str, Any]) -> dict[str, Any] | None:
+    """이 run 이 쓴 데이터셋의 품질 검사 결과. 안 돌렸으면 None.
+
+    train/val 누수는 mAP 를 통째로 부풀리므로, 그 사실을 아는 화면은 mAP 를 보여 주는
+    이 화면이어야 한다. 파일 읽기는 여기서 하고 next_actions.build 는 순수하게 남긴다.
+    """
+    dataset_id = report.get("dataset_id")
+    if not dataset_id:
+        return None
+    try:
+        path = jobs.job_dir("quality", "dataset", str(dataset_id)) / "quality.json"
+        if not path.is_file():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (jobs.JobError, OSError, json.JSONDecodeError):
+        # 품질 결과를 못 읽는다고 진단 리포트가 안 뜨면 안 된다.
+        return None
 
 
 @router.post("/{run_id}/stop")

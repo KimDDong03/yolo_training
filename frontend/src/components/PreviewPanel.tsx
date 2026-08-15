@@ -10,6 +10,7 @@ import type {
   TrainEvent,
 } from '../types'
 import { DatasetReviewPanel } from './DatasetReviewPanel'
+import { QualityPanel } from './QualityPanel'
 import { DiagnosePanel } from './DiagnosePanel'
 import { Field } from './ui/Field'
 import { EmptyState, SkeletonRows } from './ui/EmptyState'
@@ -50,9 +51,18 @@ export function PreviewPanel({ runId, run, events, dataset }: Props) {
         {tab === 'pred' && <EpochPreview runId={runId} events={events} />}
         {tab === 'plots' && <Plots runId={runId} artifacts={artifacts} finished={finished} />}
         {tab === 'diagnose' &&
-          (run ? <DiagnosePanel run={run} /> : <EmptyState title="실행 정보를 불러오는 중입니다." />)}
+          (run ? (
+            <DiagnosePanel run={run} dataset={dataset} />
+          ) : (
+            <EmptyState title="실행 정보를 불러오는 중입니다." />
+          ))}
         {tab === 'infer' && <InferenceTest runId={runId} />}
-        {tab === 'dataset' && <DatasetReviewPanel dataset={dataset} />}
+        {tab === 'dataset' && (
+          <>
+            <DatasetReviewPanel dataset={dataset} />
+            <QualityPanel dataset={dataset} />
+          </>
+        )}
       </TabPanel>
     </>
   )

@@ -129,6 +129,18 @@ export interface DatasetReport {
   review_cap: number
 }
 
+/**
+ * 등록된 원본 경로가 아직 쓸 수 있는가. 서버가 요청마다 계산해 얹는다.
+ *
+ * 경로 참조 데이터셋의 폴더를 옮기면 사진만 조용히 전부 깨진다(학습·분석은 목록 파일을
+ * 쓰므로 계속 동작한다). 이 키가 없는 응답은 이 검사가 생기기 전의 서버다.
+ */
+export interface DatasetPathStatus {
+  ok: boolean
+  code: 'ok' | 'root_missing' | 'list_missing' | 'images_missing' | 'outside_root'
+  message: string
+}
+
 export interface Dataset {
   id: string
   name: string
@@ -139,6 +151,7 @@ export interface Dataset {
   classes: string[]
   report: DatasetReport
   created_at: number
+  path_status?: DatasetPathStatus
 }
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'stopped' | 'failed'
@@ -295,6 +308,100 @@ export interface LabelIssues {
     gt: AnalysisBox[]
     pred: AnalysisBox[]
   }[]
+}
+
+/** 한 섹션만 실패한 경우. 키가 아예 없는 것(=예전 리포트)과 구분해야 한다. */
+export interface QualitySectionFailure {
+  failed: true
+  message: string
+}
+
+export interface DuplicateGroup {
+  size: number
+  /**
+   * exact = 파일이 완전히 같다 / near = 같은 사진의 다른 사본 (둘 다 지워도 된다)
+   * similar = 닮았지만 같다고 단정 못 함 / chain = 일부 쌍만 확정 (유사도는 전이적이지 않다)
+   */
+  kind: 'exact' | 'near' | 'similar' | 'chain'
+  images: { path: string; split: 'train' | 'val' }[]
+}
+
+export interface LeakPair {
+  train: string
+  val: string
+  hamming: number
+  /** 모델 특징을 못 쓴 경우 null. */
+  cosine: number | null
+  ncc: number
+  exact: boolean
+}
+
+export interface QualityReport {
+  schema_version: number
+  dataset_id: string
+  created_at: number
+  elapsed_s: number
+  params: {
+    imgsz: number
+    device: string
+    hamming: number
+    cosine: number
+    ncc: number
+    delete_ncc: number
+    /** true 가 아니면 모델 특징 없이 밝기 패턴만으로 판정했다는 뜻이다. */
+    embedding: true | { used: false; reason: string }
+  }
+  counts: {
+    train: number
+    val: number
+    scanned: number
+    unreadable: number
+    candidate_pairs: number
+  }
+  duplicates:
+    | (QualitySectionFailure | never)
+    | {
+        failed?: false
+        /** 지워도 학습에 쓰이는 사진이 그대로인 장수. 완전한 묶음에서만 센다. */
+        wasted: number
+        image_total: number
+        group_total: number
+        groups_cap: number
+        groups: DuplicateGroup[]
+        message: string
+      }
+  leakage:
+    | (QualitySectionFailure | never)
+    | {
+        failed?: false
+        val_leaked: number
+        val_total: number
+        ratio: number
+        exact_pairs: number
+        pair_total: number
+        pairs_cap: number
+        pairs: LeakPair[]
+        message: string
+      }
+  imbalance:
+    | (QualitySectionFailure | never)
+    | {
+        failed?: false
+        ratio: number | null
+        classes: {
+          cls: number
+          name: string
+          train_instances: number
+          val_instances: number
+          train_images: number
+          val_images: number
+        }[]
+        missing_in_train: string[]
+        missing_in_val: string[]
+        rare_in_train: string[]
+      }
+  /** 이 검사가 무엇을 보지 않았는가. 화면에 그대로 띄운다. */
+  notes: string[]
 }
 
 /** 서버가 요청 때마다 만들어 얹는다. 리포트 파일에는 없다. */

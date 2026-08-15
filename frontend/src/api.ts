@@ -12,6 +12,7 @@ import type {
   ParamSchema,
   PredictResult,
   Preset,
+  QualityReport,
   Recommendation,
   Run,
   SystemInfo,
@@ -76,6 +77,16 @@ export const api = {
       `/api/datasets/${id}/samples`,
     ),
   datasetImageUrl: (id: string, path: string) => `/api/datasets/${id}/image?path=${encodeURIComponent(path)}`,
+  startQuality: (id: string, body: { imgsz: number; use_gpu: boolean }) =>
+    req<JobStatus>(`/api/jobs/dataset/${id}/quality`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  qualityStatus: (id: string) => req<JobStatus>(`/api/jobs/dataset/${id}/quality`),
+  /** 잡 산출물 서빙(/files/)을 그대로 쓴다 — 전용 엔드포인트가 없다. */
+  qualityReport: (id: string) =>
+    req<QualityReport>(`/api/jobs/dataset/${id}/quality/files/quality.json`),
   datasetReview: (id: string, category = '', offset = 0, limit = 24) =>
     req<DatasetReview>(
       `/api/datasets/${id}/review?category=${encodeURIComponent(category)}&offset=${offset}&limit=${limit}`,

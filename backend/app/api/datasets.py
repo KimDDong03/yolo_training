@@ -33,13 +33,24 @@ def _persist(meta: dict[str, Any]) -> dict[str, Any]:
             meta["created_at"],
         ),
     )
-    return meta
+    # 방금 등록한 것이라 정상이겠지만, 응답 모양을 목록·상세와 같게 맞춘다.
+    return _with_path_status(meta)
+
+
+def _with_path_status(dataset: dict[str, Any]) -> dict[str, Any]:
+    """등록 경로가 아직 살아 있는지를 응답에 얹는다.
+
+    db.row_to_dataset 에 넣지 않는 이유: 코어가 파일시스템을 만지게 되고, 이 값이
+    필요 없는 호출부(추정 API 등)에도 붙는다.
+    """
+    dataset["path_status"] = dataset_ingest.path_status(dataset)
+    return dataset
 
 
 @router.get("")
 def list_datasets() -> list[dict[str, Any]]:
     return [
-        db.row_to_dataset(r)
+        _with_path_status(db.row_to_dataset(r))
         for r in db.query("SELECT * FROM datasets ORDER BY created_at DESC")
     ]
 
@@ -49,7 +60,7 @@ def get_dataset(dataset_id: str) -> dict[str, Any]:
     row = db.query_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
     if row is None:
         raise HTTPException(404, "데이터셋을 찾을 수 없습니다.")
-    return db.row_to_dataset(row)
+    return _with_path_status(db.row_to_dataset(row))
 
 
 @router.post("/{dataset_id}/recommendation")
@@ -221,6 +232,14 @@ def dataset_image(dataset_id: str, path: str) -> FileResponse:
     """샘플 뷰어용 이미지 서빙. 등록된 데이터셋 루트 안쪽만 허용한다."""
     dataset = get_dataset(dataset_id)
     root = Path(dataset["root"]).resolve()
+    # 등록된 폴더 자체가 사라졌으면 아래 경계 검사는 반드시 실패한다. 그때 "폴더 밖의
+    # 파일" 이라고 답하면 원인을 가린다 — 사용자가 봐야 하는 것은 경로가 낡았다는 사실이다.
+    if not root.is_dir():
+        raise HTTPException(
+            404,
+            f"등록된 원본 폴더가 없습니다: {dataset['root']}"
+            " — 폴더를 옮겼거나 지운 것으로 보입니다. 데이터셋을 다시 등록해야 사진이 열립니다.",
+        )
     # 검수 목록은 root 기준 상대 경로를 주고, 샘플 목록은 절대 경로를 준다 — 둘 다 받는다.
     raw = Path(path)
     target = (raw if raw.is_absolute() else root / raw).resolve()

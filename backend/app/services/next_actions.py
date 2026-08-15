@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from app.services import tide
+from app.services import quality, tide
 
 # 넷 이상 늘어놓으면 우선순위가 사라져 아무것도 안 하게 된다.
 ACTION_CAP = 3
@@ -56,7 +56,7 @@ def _fmt(value: Any, digits: int = 3) -> str:
     return "-" if value is None else f"{float(value):.{digits}f}"
 
 
-def _context(report: dict[str, Any]) -> dict[str, Any]:
+def _context(report: dict[str, Any], data_quality: dict[str, Any] | None = None) -> dict[str, Any]:
     overall = report.get("overall") or {}
     recommendation = report.get("conf_recommendation") or {}
     tide = report.get("tide") or {}
@@ -81,7 +81,17 @@ def _context(report: dict[str, Any]) -> dict[str, Any]:
     instances = int(overall.get("instances") or 0)
     label_total = int(labels.get("total") or 0)
 
+    # 데이터 품질 검사는 별도 잡이라 안 돌렸을 수 있다. 그때는 누수 규칙이 조용히 꺼진다 —
+    # 확인하지 않은 것을 없다고 말하지 않는다.
+    leak = (data_quality or {}).get("leakage") or {}
+    leak_ratio = float(leak.get("ratio") or 0.0) if not leak.get("failed") else 0.0
+    leak_count = int(leak.get("val_leaked") or 0) if not leak.get("failed") else 0
+
     context: dict[str, Any] = {
+        "leak_ratio": leak_ratio,
+        "leak_count": leak_count,
+        "leak_pct": f"{leak_ratio * 100:.1f}",
+        "leak_val_total": int(leak.get("val_total") or 0),
         "map50": overall.get("map50"),
         "precision": overall.get("precision"),
         "recall": overall.get("recall"),
@@ -125,6 +135,21 @@ def _is(kind: str, floor: float = DOMINANT_SHARE_SOFT) -> Callable[[dict[str, An
 
 
 ACTIONS: list[Action] = [
+    Action(
+        # 맨 앞이다. 아래 처방들은 전부 mAP 를 근거로 삼는데 그 mAP 자체가 부풀려진
+        # 상황이기 때문이다. 다만 terminal 은 아니다 — 어떤 오류 "유형" 이 많은가는
+        # 누수와 무관하게 여전히 참이다.
+        "val_leakage",
+        "critical",
+        lambda c: c["leak_ratio"] >= quality.LEAK_RATIO_ALERT,
+        "지금 점수를 그대로 믿으면 안 됩니다",
+        "검증용 사진 {leak_val_total}장 가운데 {leak_count}장({leak_pct}%)이 학습용에도 "
+        "들어 있습니다. 모델이 이미 외운 사진으로 채점하고 있어서 mAP50 {map50_s} 는 "
+        "처음 보는 사진에서의 실력보다 높게 나온 값입니다.",
+        "데이터셋 화면의 품질 검사에서 겹치는 사진을 확인하고, 검증용 쪽을 지운 뒤 "
+        "다시 학습하세요. 그 전에는 이 아래 숫자들의 절대값을 신뢰하지 마세요 "
+        "(어떤 오류가 많은가의 비교는 그대로 쓸 수 있습니다).",
+    ),
     Action(
         "model_not_ready",
         "critical",
@@ -279,9 +304,16 @@ FALLBACK = Action(
 )
 
 
-def build(report: dict[str, Any]) -> list[dict[str, Any]]:
-    """report.json 딕셔너리만 보고 처방을 만든다. 파일 I/O 없음."""
-    context = _context(report)
+def build(
+    report: dict[str, Any], data_quality: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """report.json 딕셔너리만 보고 처방을 만든다. 파일 I/O 없음.
+
+    data_quality 는 데이터셋 품질 검사(quality.json)의 결과다. 그 잡을 안 돌렸으면
+    None 이고, 누수 규칙만 조용히 꺼진다. 읽어 오는 것은 호출자(API)의 몫이다 —
+    이 함수의 순수성이 규칙을 시험 가능하게 만든다.
+    """
+    context = _context(report, data_quality)
 
     def render(action: Action) -> dict[str, Any]:
         return {

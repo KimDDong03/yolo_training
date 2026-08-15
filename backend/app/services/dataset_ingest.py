@@ -36,6 +36,10 @@ SPLIT_ALIASES = {
 # 카테고리별로 review.json 에 남길 최대 항목 수. 넘으면 total/truncated 로 잘렸음을 알린다.
 REVIEW_CAP = 2_000
 
+# path_status 가 목록에서 실제 파일 하나를 찾을 때까지 훑을 최대 줄 수.
+# 전수로 보면 데이터셋 목록 API 가 이미지 수만큼 stat 을 부른다.
+PATH_PROBE_SAMPLE = 20
+
 # 안정된 카테고리 코드 → 화면 표시명. 코드가 필터의 키다(한글 문장을 키로 쓰면 안 된다).
 ISSUE_CATEGORIES: dict[str, str] = {
     "missing_label": "라벨 없는 이미지",
@@ -361,6 +365,83 @@ def _box_stats(areas: list[float], aspects: list[float]) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------- 검수 리포트
+
+
+def path_status(dataset: dict[str, Any]) -> dict[str, Any]:
+    """등록된 경로가 아직 쓸 수 있는 상태인가.
+
+    경로 참조 데이터셋(source='path')의 원본 폴더를 옮기면 사진이 조용히 전부 깨진다.
+    학습과 분석은 train.txt/val.txt 를 읽으므로 멀쩡히 돌아가고, 이미지 서빙만
+    (api/datasets.py 의 dataset_image) DB 의 root 를 경계로 쓰기 때문이다.
+    화면에 사유가 뜨지 않으면 사용자는 원인을 알 방법이 없다.
+
+    판정 근거는 **DB 의 root** 다. meta.json 에도 root 가 있지만 등록 시점 값이라
+    갱신되지 않는다(옮긴 뒤 DB 만 고치면 meta.json 은 옛 경로로 남는다).
+
+    문장은 여기서 만든다 — 프론트는 렌더링만 한다.
+    """
+    root_raw = str(dataset.get("root") or "")
+    root = Path(root_raw)
+    dataset_dir = DATASETS_DIR / str(dataset.get("id") or "")
+
+    def bad(code: str, message: str) -> dict[str, Any]:
+        return {"ok": False, "code": code, "message": message}
+
+    if not root_raw or not root.is_dir():
+        return bad(
+            "root_missing",
+            f"등록된 원본 폴더를 찾을 수 없습니다: {root_raw}"
+            " — 폴더를 옮겼거나 지운 것으로 보입니다. 학습과 분석은 목록 파일을 쓰므로"
+            " 계속 동작하지만 사진은 한 장도 열리지 않습니다."
+            " 데이터셋을 지우고 새 경로로 다시 등록하세요.",
+        )
+
+    listing = dataset_dir / "train.txt"
+    if not listing.is_file():
+        return bad(
+            "list_missing",
+            "이미지 목록 파일(train.txt)이 없습니다. 등록이 끝나지 않았거나 저장소가"
+            " 손상됐습니다. 데이터셋을 다시 등록하세요.",
+        )
+
+    # 목록 앞부분만 본다. 전수 확인은 이미지 수만큼 stat 을 부르게 되고 목록 API 가
+    # 데이터셋마다 이걸 호출한다.
+    try:
+        lines = listing.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        return bad("list_missing", f"이미지 목록 파일을 읽지 못했습니다: {exc}")
+
+    resolved_root = root.resolve()
+    sampled = 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        sampled += 1
+        image = Path(line)
+        if not image.is_file():
+            if sampled >= PATH_PROBE_SAMPLE:
+                break
+            continue
+        target = image.resolve()
+        if target != resolved_root and resolved_root not in target.parents:
+            return bad(
+                "outside_root",
+                "이미지 목록이 등록된 폴더 밖을 가리킵니다"
+                f" (목록: {target}, 등록: {resolved_root})."
+                " 폴더를 옮기면서 목록만 고치고 등록 경로는 그대로 둔 상태입니다."
+                " 사진이 한 장도 열리지 않습니다. 데이터셋을 다시 등록하세요.",
+            )
+        return {"ok": True, "code": "ok", "message": ""}
+
+    if sampled == 0:
+        return bad("list_missing", "이미지 목록 파일이 비어 있습니다. 다시 등록하세요.")
+    return bad(
+        "images_missing",
+        f"이미지 목록의 앞 {sampled}개 파일이 모두 없습니다."
+        " 원본 폴더의 내용이 바뀌었거나 지워진 것으로 보입니다."
+        " 사진이 열리지 않으면 데이터셋을 다시 등록하세요.",
+    )
 
 
 def review_path(dataset_dir: Path) -> Path:

@@ -4,6 +4,7 @@ import { api } from '../api'
 import type {
   AnalysisBox,
   AnalysisReport,
+  Dataset,
   JobStatus,
   LabelIssues,
   NextAction,
@@ -11,6 +12,7 @@ import type {
   TideBreakdown,
 } from '../types'
 import { BoxOverlay, type OverlayBox } from './BoxOverlay'
+import { DatasetPathWarning } from './DatasetPathWarning'
 import { Modal } from './ui/Dialog'
 import { EmptyState } from './ui/EmptyState'
 
@@ -222,7 +224,7 @@ function TideCard({ tide }: { tide: TideBreakdown }) {
  * 분석은 검증을 한 번 더 도는 별도 프로세스라 시간이 걸린다. 잡으로 띄우고 폴링한다
  * (내보내기와 같은 방식).
  */
-export function DiagnosePanel({ run }: { run: Run }) {
+export function DiagnosePanel({ run, dataset }: { run: Run; dataset?: Dataset | null }) {
   const [job, setJob] = useState<JobStatus | null>(null)
   const [report, setReport] = useState<AnalysisReport | null>(null)
   const [busy, setBusy] = useState(false)
@@ -284,6 +286,9 @@ export function DiagnosePanel({ run }: { run: Run }) {
 
   return (
     <div className="stack">
+      {/* 경로가 낡았으면 갤러리 사진이 전부 깨진다. 사유가 없으면 "모델이 다 놓쳤다" 로 읽힌다. */}
+      <DatasetPathWarning dataset={dataset} />
+
       <div className="card">
         <div className="card-head">
           <h3>오류 분석</h3>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { api } from '../api'
-import type { AnalysisBox, AnalysisReport, JobStatus, Run } from '../types'
+import type { AnalysisBox, AnalysisReport, JobStatus, Run, TideBreakdown } from '../types'
 import { BoxOverlay, type OverlayBox } from './BoxOverlay'
 import { Modal } from './ui/Dialog'
 import { EmptyState } from './ui/EmptyState'
@@ -32,6 +32,68 @@ function toOverlay(boxes: AnalysisBox[], kind: 'gt' | 'pred'): OverlayBox[] {
       dashed: wrong,
     }
   })
+}
+
+/**
+ * 오류 유형별로 mAP 를 얼마나 깎는지.
+ *
+ * 숫자만 늘어놓으면 비전문가는 여전히 다음 행동을 못 정하므로, 손실이 큰 쪽 셋의 처방
+ * 문장을 함께 싣는다. 문장은 서버가 만든 것을 그대로 쓴다.
+ */
+function TideCard({ tide }: { tide: TideBreakdown }) {
+  const rows = [...tide.errors].sort((a, b) => (b.dap ?? 0) - (a.dap ?? 0))
+  const worst = Math.max(...rows.map((r) => r.dap ?? 0), 0)
+  const advice = rows.filter((r) => (r.dap ?? 0) > 0).slice(0, 3)
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h3>무엇이 mAP 를 깎는가</h3>
+        <span className="small muted spacer">
+          이 분석 기준 mAP50 {pct(tide.baseline_map50)}
+        </span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>오류 유형</th>
+            <th style={{ width: '40%' }}>mAP50 손실</th>
+            <th>손실</th>
+            <th>건수</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.kind}>
+              <td>{row.label}</td>
+              <td>
+                <div className="progress">
+                  <div style={{ width: worst > 0 ? `${((row.dap ?? 0) / worst) * 100}%` : '0%' }} />
+                </div>
+              </td>
+              <td>{pct(row.dap)}</td>
+              <td>{row.count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {advice.length === 0 ? (
+        <p className="help" style={{ marginTop: 'var(--sp-3)' }}>
+          어떤 유형을 고쳐도 mAP50 이 오르지 않습니다. 특정 오류를 손볼 단계가 아니라 모델이
+          아직 제대로 학습되지 않은 상태입니다.
+        </p>
+      ) : (
+        advice.map((row) => (
+          <p key={row.kind} className="help" style={{ marginTop: 'var(--sp-3)' }}>
+            <strong>{row.label}</strong> {row.advice}
+          </p>
+        ))
+      )}
+      <p className="small muted" style={{ marginTop: 'var(--sp-3)' }}>
+        {tide.note}
+      </p>
+    </div>
+  )
 }
 
 /**
@@ -124,6 +186,10 @@ export function DiagnosePanel({ run }: { run: Run }) {
 
       {report && (
         <>
+          {/* 키 자체가 없으면 오류 분해가 생기기 전(schema_version 1)의 리포트다. */}
+          {report.tide?.failed && <p className="help warn">{report.tide.message}</p>}
+          {report.tide && !report.tide.failed && <TideCard tide={report.tide} />}
+
           <div className="card">
             <div className="card-head">
               <h3>클래스별 성능</h3>

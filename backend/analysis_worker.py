@@ -62,7 +62,7 @@ def main() -> int:
 
         from ultralytics import YOLO
 
-        from app.services import diagnose
+        from app.services import diagnose, tide
 
         validator = diagnose.collecting_validator()
         model = YOLO(str(weights))
@@ -100,9 +100,22 @@ def main() -> int:
         )
         gallery, gallery_total = diagnose.build_gallery(records, gallery_conf, names)
 
+        write(events, {
+            "t": "progress", "stage": "tide", "message": "오류 유형을 나누는 중",
+        })
+        # 분해가 깨져도 나머지 리포트는 살아야 한다. 다만 조용히 빼면 "예전 리포트라 없는 것"
+        # 과 구분되지 않으므로, 실패했다는 사실 자체를 값으로 남긴다.
+        try:
+            breakdown = tide.error_breakdown(records, names, collection_conf=0.001)
+        except Exception as exc:  # noqa: BLE001
+            breakdown = {
+                "failed": True,
+                "message": f"오류 분해를 계산하지 못했습니다: {exc}",
+            }
+
         results = getattr(metrics, "results_dict", {}) or {}
         report = {
-            "schema_version": 1,
+            "schema_version": 2,
             "run_id": run_dir.name,
             "dataset_id": config.get("dataset_id"),
             "weights": args.weights,
@@ -119,6 +132,7 @@ def main() -> int:
                 "map50": _num(results.get("metrics/mAP50(B)")),
                 "map50_95": _num(results.get("metrics/mAP50-95(B)")),
             },
+            "tide": breakdown,
             "per_class": table,
             "worst_classes": diagnose.worst_classes(table),
             "conf_recommendation": recommendation,

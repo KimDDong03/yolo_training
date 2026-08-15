@@ -90,6 +90,9 @@ def match(record: dict[str, Any], conf: float) -> dict[str, Any]:
         "p_conf": p_conf,
         "p_hit": pred_hit,
         "gt_taken": gt_taken,
+        # 오류 분해(tide.py)가 "짝을 못 지은 이유" 를 따지려면 이 행렬이 필요하다.
+        # 이미 계산해 놓은 것이라 버리지 않고 넘긴다. 행/열은 위 정렬 순서와 같다.
+        "ious": ious,
         "tp": int(pred_hit.sum()),
         "fp": int((~pred_hit).sum()),
         "fn": int((gt_taken < 0).sum()),

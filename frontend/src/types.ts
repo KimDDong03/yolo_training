@@ -211,6 +211,41 @@ export interface AnalysisBox {
   state: 'hit' | 'miss' | 'false'
 }
 
+export type TideKind = 'cls' | 'loc' | 'both' | 'dupe' | 'bkg' | 'miss'
+
+export interface TideError {
+  kind: TideKind
+  label: string
+  count: number
+  /** 이 유형만 고쳤을 때의 mAP50 상승분. 무엇부터 손댈지가 이 값의 크기 순이다. */
+  dap: number | null
+  /** 분모 보정 전 값. 진단용이라 화면에는 쓰지 않는다. */
+  dap_naive: number | null
+  /** 놓침을 고치면서 정답이 하나도 안 남게 된 클래스. */
+  dropped_classes: number[]
+  /** 양수 상승분 합에서 이 유형이 차지하는 비율. 전부 0 이면 null. */
+  share: number | null
+  advice: string
+}
+
+export interface TideBreakdown {
+  failed?: false
+  /** 이 분석 자체의 매칭 기준. overall.map50 과 미세하게 다를 수 있다. */
+  baseline_map50: number | null
+  baseline_classes: number[]
+  params: { collection_conf: number; t_fg: number; t_bg: number; metric: string }
+  errors: TideError[]
+  per_class_counts: { cls: number; name: string; counts: Record<TideKind, number> }[]
+  confusion_pairs: { pred: string; gt: string; count: number }[]
+  note: string
+}
+
+/** 분해만 실패한 경우. 키가 아예 없는 것(=예전 리포트)과 구분해야 한다. */
+export interface TideFailure {
+  failed: true
+  message: string
+}
+
 export interface AnalysisReport {
   schema_version: number
   run_id: string
@@ -239,6 +274,8 @@ export interface AnalysisReport {
     /** false 면 검증 셋에 이 클래스의 정답이 없어 성능을 알 수 없다는 뜻이다. */
     evaluated: boolean
   }[]
+  /** schema_version 2 부터. 그 이전 리포트에는 아예 없다. */
+  tide?: TideBreakdown | TideFailure
   worst_classes: { name: string | null; ap50_95: number | null; message: string }[]
   conf_recommendation: {
     conf: number | null

@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react'
 
 import { api } from '../api'
-import type { AnalysisBox, AnalysisReport, JobStatus, Run, TideBreakdown } from '../types'
+import type {
+  AnalysisBox,
+  AnalysisReport,
+  JobStatus,
+  LabelIssues,
+  NextAction,
+  Run,
+  TideBreakdown,
+} from '../types'
 import { BoxOverlay, type OverlayBox } from './BoxOverlay'
 import { Modal } from './ui/Dialog'
 import { EmptyState } from './ui/EmptyState'
@@ -32,6 +40,109 @@ function toOverlay(boxes: AnalysisBox[], kind: 'gt' | 'pred'): OverlayBox[] {
       dashed: wrong,
     }
   })
+}
+
+/**
+ * 표를 읽기 전에 결론부터.
+ *
+ * 비전문가가 실제로 읽고 따라 하는 것은 이 카드다. 그래서 맨 위에 둔다. 판정도 문장도
+ * 서버가 만든 것을 그대로 쓴다.
+ */
+function NextActionCard({ actions }: { actions: NextAction[] }) {
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h3>다음에 할 일</h3>
+      </div>
+      {actions.map((action) => (
+        <div key={action.code} style={{ marginTop: 'var(--sp-3)' }}>
+          <strong className={action.severity === 'critical' ? 'error' : undefined}>
+            {action.title}
+          </strong>
+          <p className="small">{action.cause}</p>
+          <p className="small muted">{action.fix}</p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * 모델이 아니라 라벨이 틀렸을 법한 자리.
+ *
+ * 의심 지점만 굵게 그리고 나머지 예측은 그리지 않는다. 다 그리면 무엇을 보라는 것인지
+ * 알 수 없어진다.
+ */
+function LabelIssueCard({
+  issues,
+  datasetId,
+  onZoom,
+}: {
+  issues: LabelIssues
+  datasetId: string
+  onZoom: (src: string) => void
+}) {
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h3>라벨 오류 후보</h3>
+        <span className="small muted spacer">
+          {issues.total}건 중 {issues.shown}건
+        </span>
+      </div>
+      {/* val 한정이라는 사실이 사진보다 먼저 눈에 들어와야 한다. */}
+      <p className="help warn">{issues.scope_note}</p>
+      {issues.reason && <p className="help warn">{issues.reason}</p>}
+      {issues.kinds.length > 0 && (
+        <p className="small muted">
+          {issues.kinds.map((k) => `${k.label} ${k.count}`).join(' · ')}
+        </p>
+      )}
+      {issues.items.length === 0 ? (
+        <EmptyState title="라벨 오류로 의심할 만한 자리를 찾지 못했습니다." />
+      ) : (
+        <div className="gallery">
+          {issues.items.map((item) => (
+            <figure key={item.image}>
+              <BoxOverlay
+                src={api.datasetImageUrl(datasetId, item.image)}
+                alt={item.name}
+                boxes={[
+                  ...item.gt.map((b) => ({
+                    box: b.box,
+                    label: `정답: ${b.name}`,
+                    color: 'var(--ok)',
+                  })),
+                  ...item.findings.flatMap((f) =>
+                    f.ref_box
+                      ? [{ box: f.ref_box, label: `근거: ${f.ref_name}`, color: 'var(--muted)', dashed: true }]
+                      : [],
+                  ),
+                  ...item.findings.map((f) => ({
+                    box: f.box,
+                    label: `${f.label}: ${f.name}`,
+                    color: 'var(--warn)',
+                    emphasis: true,
+                  })),
+                ]}
+                onZoom={onZoom}
+              />
+              <figcaption>
+                {item.name}
+                {item.findings.map((f, i) => (
+                  <span key={i} className="muted">
+                    <br />
+                    {f.message}
+                  </span>
+                ))}
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
+      <p className="help">주황 굵게=의심 지점 · 회색 점선=근거 박스 · 초록=나머지 정답</p>
+    </div>
+  )
 }
 
 /**
@@ -186,6 +297,10 @@ export function DiagnosePanel({ run }: { run: Run }) {
 
       {report && (
         <>
+          {report.next_actions && report.next_actions.length > 0 && (
+            <NextActionCard actions={report.next_actions} />
+          )}
+
           {/* 키 자체가 없으면 오류 분해가 생기기 전(schema_version 1)의 리포트다. */}
           {report.tide?.failed && <p className="help warn">{report.tide.message}</p>}
           {report.tide && !report.tide.failed && <TideCard tide={report.tide} />}
@@ -246,6 +361,14 @@ export function DiagnosePanel({ run }: { run: Run }) {
               <p className="help warn">{report.conf_recommendation.message}</p>
             )}
           </div>
+
+          {report.label_issues && (
+            <LabelIssueCard
+              issues={report.label_issues}
+              datasetId={run.dataset_id}
+              onZoom={setZoom}
+            />
+          )}
 
           <div className="card">
             <div className="card-head">

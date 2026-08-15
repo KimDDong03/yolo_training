@@ -39,7 +39,7 @@ FALLBACK_CONF = 0.25
 WORST_CAP = 3
 
 
-def _iou_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+def iou_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """(n,4) x (m,4) xyxy 박스 쌍의 IoU."""
     if len(a) == 0 or len(b) == 0:
         return np.zeros((len(a), len(b)), dtype=np.float32)
@@ -69,7 +69,7 @@ def match(record: dict[str, Any], conf: float) -> dict[str, Any]:
     p_boxes, p_cls, p_conf = p_boxes[order], p_cls[order], p_conf[order]
 
     g_boxes, g_cls = record["gt_xyxy"], record["gt_cls"]
-    ious = _iou_matrix(p_boxes, g_boxes)
+    ious = iou_matrix(p_boxes, g_boxes)
 
     gt_taken = np.full(len(g_boxes), -1, dtype=int)  # 정답 -> 이를 맞춘 예측 index
     pred_hit = np.zeros(len(p_boxes), dtype=bool)
@@ -132,7 +132,7 @@ def collecting_validator():
     return CollectingValidator
 
 
-def _to_display(boxes: np.ndarray, record: dict[str, Any]) -> np.ndarray:
+def to_display(boxes: np.ndarray, record: dict[str, Any]) -> np.ndarray:
     """letterbox 픽셀 좌표를 원본 기준 0~1 로 되돌린다.
 
     화면 오버레이는 정규화 좌표를 쓴다(데이터셋 검수 화면과 같은 규약).
@@ -343,8 +343,8 @@ def build_gallery(
     for score, record, matched in scored[:GALLERY_CAP]:
         height, width = record["ori_shape"]
         order = np.argsort(-matched["p_conf"])[:BOXES_PER_IMAGE]
-        p_display = _to_display(matched["p_boxes"][order], record)
-        g_display = _to_display(record["gt_xyxy"], record)
+        p_display = to_display(matched["p_boxes"][order], record)
+        g_display = to_display(record["gt_xyxy"], record)
 
         gallery.append(
             {

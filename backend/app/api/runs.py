@@ -24,6 +24,7 @@ from app.services import (
     gpu,
     jobs,
     models,
+    next_actions,
     param_schema,
     predict,
     run_manager,
@@ -121,9 +122,12 @@ def analysis_report(run_id: str) -> dict[str, Any]:
     if not path.is_file():
         raise HTTPException(404, "아직 진단 결과가 없습니다.")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        report = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise HTTPException(500, "진단 결과를 읽지 못했습니다.") from exc
+    # 처방은 리포트에 굳히지 않고 여기서 얹는다 — 문구를 고치면 과거 리포트에도 바로 적용된다.
+    report["next_actions"] = next_actions.build(report)
+    return report
 
 
 @router.post("/{run_id}/stop")

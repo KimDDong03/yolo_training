@@ -116,7 +116,7 @@ def classify(records: list[dict[str, Any]], conf: float = 0.0) -> tuple[dict, di
 
     딕셔너리 리스트로 들면 검출 150만 개에서 수백 MB 가 되므로 병렬 numpy 배열로 담는다.
 
-    dets: img cls conf tp err gt idx   (idx = 그 이미지 안에서 신뢰도순 정렬 후의 위치)
+    dets: img cls conf tp err gt iou idx  (idx = 그 이미지 안에서 신뢰도순 정렬 후의 위치)
     gts:  img cls taken miss best_iou best_pred
     """
     d_img: list[int] = []
@@ -125,6 +125,7 @@ def classify(records: list[dict[str, Any]], conf: float = 0.0) -> tuple[dict, di
     d_tp: list[bool] = []
     d_err: list[int] = []
     d_gt: list[int] = []
+    d_iou: list[float] = []
     d_idx: list[int] = []
     g_img: list[int] = []
     g_cls: list[int] = []
@@ -165,6 +166,9 @@ def classify(records: list[dict[str, Any]], conf: float = 0.0) -> tuple[dict, di
             d_tp.append(bool(p_hit[pi]))
             d_err.append(_NO_ERROR if kind is None else _CODES[kind])
             d_gt.append(-1 if gt_index < 0 else offset + gt_index)
+            # 판정 근거가 된 겹침. 라벨 오류 후보(label_issues.py)가 "박스는 맞는데
+            # 종류만 다르다" 를 가려낼 때 이 값을 본다.
+            d_iou.append(0.0 if gt_index < 0 else float(ious[pi, gt_index]))
             d_idx.append(pi)
 
         # 놓침 = 아무도 못 잡았고, 위치·클래스 오류로도 설명되지 않은 정답.
@@ -194,6 +198,7 @@ def classify(records: list[dict[str, Any]], conf: float = 0.0) -> tuple[dict, di
         "tp": np.asarray(d_tp, dtype=bool),
         "err": np.asarray(d_err, dtype=np.int8),
         "gt": np.asarray(d_gt, dtype=np.int32),
+        "iou": np.asarray(d_iou, dtype=np.float32),
         "idx": np.asarray(d_idx, dtype=np.int32),
     }
     gts = {
@@ -302,15 +307,21 @@ def _confusion_pairs(dets: dict, gts: dict, names: dict[int, str]) -> list[dict[
 
 
 def error_breakdown(
-    records: list[dict[str, Any]], names: dict[int, str], collection_conf: float = 0.001
+    records: list[dict[str, Any]],
+    names: dict[int, str],
+    collection_conf: float = 0.001,
+    classified: tuple[dict, dict] | None = None,
 ) -> dict[str, Any]:
     """report.json 의 "tide" 에 그대로 들어가는 값.
 
     collection_conf 는 검증이 예측을 모은 하한이다(계산에는 쓰지 않고 기록만 한다).
     분해 자체는 모아 온 예측 전부를 쓴다 — 신뢰도로 걸러 내면 배경 오검출과 중복이
     사라져 정작 재고 싶은 것이 안 보인다.
+
+    classified 를 주면 그 결과를 재사용한다. 라벨 오류 후보가 같은 분류를 보므로,
+    두 번 분류하면 비용도 두 배고 두 화면의 판정이 어긋날 수 있다.
     """
-    dets, gts = classify(records, 0.0)
+    dets, gts = classified if classified is not None else classify(records, 0.0)
     baseline = _evaluate(dets["cls"], dets["conf"], dets["tp"], gts["cls"])
     counts = _counts(dets, gts)
 

@@ -37,22 +37,22 @@ FAR = [70.0, 70.0, 90.0, 90.0]
 class IouTest(unittest.TestCase):
     def test_identical_boxes(self) -> None:
         a = np.array([BOX], dtype=np.float32)
-        self.assertAlmostEqual(float(diagnose._iou_matrix(a, a)[0, 0]), 1.0, places=5)
+        self.assertAlmostEqual(float(diagnose.iou_matrix(a, a)[0, 0]), 1.0, places=5)
 
     def test_disjoint_boxes(self) -> None:
         a = np.array([BOX], dtype=np.float32)
         b = np.array([FAR], dtype=np.float32)
-        self.assertEqual(float(diagnose._iou_matrix(a, b)[0, 0]), 0.0)
+        self.assertEqual(float(diagnose.iou_matrix(a, b)[0, 0]), 0.0)
 
     def test_half_overlap(self) -> None:
         a = np.array([[0.0, 0.0, 10.0, 10.0]], dtype=np.float32)
         b = np.array([[5.0, 0.0, 15.0, 10.0]], dtype=np.float32)
         # 교집합 50, 합집합 150
-        self.assertAlmostEqual(float(diagnose._iou_matrix(a, b)[0, 0]), 50 / 150, places=5)
+        self.assertAlmostEqual(float(diagnose.iou_matrix(a, b)[0, 0]), 50 / 150, places=5)
 
     def test_empty_inputs(self) -> None:
         empty = np.zeros((0, 4), dtype=np.float32)
-        self.assertEqual(diagnose._iou_matrix(empty, np.array([BOX])).shape, (0, 1))
+        self.assertEqual(diagnose.iou_matrix(empty, np.array([BOX])).shape, (0, 1))
 
 
 class MatchTest(unittest.TestCase):

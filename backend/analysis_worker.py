@@ -62,7 +62,7 @@ def main() -> int:
 
         from ultralytics import YOLO
 
-        from app.services import diagnose, tide
+        from app.services import diagnose, label_issues, tide
 
         validator = diagnose.collecting_validator()
         model = YOLO(str(weights))
@@ -105,17 +105,41 @@ def main() -> int:
         })
         # 분해가 깨져도 나머지 리포트는 살아야 한다. 다만 조용히 빼면 "예전 리포트라 없는 것"
         # 과 구분되지 않으므로, 실패했다는 사실 자체를 값으로 남긴다.
+        results = getattr(metrics, "results_dict", {}) or {}
+        overall = {
+            "images": len(records),
+            "instances": int(sum(len(r["gt_cls"]) for r in records)),
+            "precision": _num(results.get("metrics/precision(B)")),
+            "recall": _num(results.get("metrics/recall(B)")),
+            "map50": _num(results.get("metrics/mAP50(B)")),
+            "map50_95": _num(results.get("metrics/mAP50-95(B)")),
+        }
         try:
-            breakdown = tide.error_breakdown(records, names, collection_conf=0.001)
+            # 분류는 한 번만 한다. 두 화면이 서로 다른 판정을 보여 주면 안 된다.
+            classified = tide.classify(records)
+            breakdown = tide.error_breakdown(
+                records, names, collection_conf=0.001, classified=classified
+            )
+            issues = label_issues.build(
+                records, *classified, names, table, overall,
+                conf_reliable=bool(recommendation.get("reliable")),
+            )
         except Exception as exc:  # noqa: BLE001
             breakdown = {
                 "failed": True,
                 "message": f"오류 분해를 계산하지 못했습니다: {exc}",
             }
+            issues = {
+                "available": False,
+                "reason": f"라벨 오류 후보를 찾지 못했습니다: {exc}",
+                "model_evidence": False,
+                "total": 0, "shown": 0, "kinds": [], "items": [],
+                "scope_note": label_issues.SCOPE_NOTE,
+                "images_cap": label_issues.ISSUE_IMAGE_CAP,
+            }
 
-        results = getattr(metrics, "results_dict", {}) or {}
         report = {
-            "schema_version": 2,
+            "schema_version": 3,
             "run_id": run_dir.name,
             "dataset_id": config.get("dataset_id"),
             "weights": args.weights,
@@ -124,15 +148,9 @@ def main() -> int:
             "elapsed_s": round(time.time() - started, 1),
             "params": {"imgsz": args.imgsz, "conf": 0.001, "batch": args.batch},
             "classes": [names[k] for k in sorted(names)],
-            "overall": {
-                "images": len(records),
-                "instances": int(sum(len(r["gt_cls"]) for r in records)),
-                "precision": _num(results.get("metrics/precision(B)")),
-                "recall": _num(results.get("metrics/recall(B)")),
-                "map50": _num(results.get("metrics/mAP50(B)")),
-                "map50_95": _num(results.get("metrics/mAP50-95(B)")),
-            },
+            "overall": overall,
             "tide": breakdown,
+            "label_issues": issues,
             "per_class": table,
             "worst_classes": diagnose.worst_classes(table),
             "conf_recommendation": recommendation,

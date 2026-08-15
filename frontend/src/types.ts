@@ -246,6 +246,55 @@ export interface TideFailure {
   message: string
 }
 
+export interface LabelFinding {
+  kind: string
+  label: string
+  cls: number
+  name: string
+  conf: number | null
+  iou: number
+  score: number
+  /** 의심 지점. [x1, y1, x2, y2], 각각 0~1. */
+  box: [number, number, number, number]
+  /** 판정의 근거가 된 상대 박스. 없을 수 있다. */
+  ref_box: [number, number, number, number] | null
+  ref_name: string | null
+  message: string
+}
+
+export interface LabelIssues {
+  available: boolean
+  /** 모델 근거를 쓰지 못한 사유. 쓸 수 있으면 null. */
+  reason: string | null
+  /** false 면 라벨만 보고 찾은 것(겹치는 정답 박스)만 실려 있다. */
+  model_evidence: boolean
+  /** 상한을 적용하기 전 전체 건수. */
+  total: number
+  shown: number
+  images_cap: number
+  kinds: { kind: string; label: string; count: number }[]
+  /** 검증 셋만 봤다는 한계. 화면 맨 위에 그대로 띄운다. */
+  scope_note: string
+  items: {
+    image: string
+    name: string
+    width: number
+    height: number
+    findings: LabelFinding[]
+    gt: AnalysisBox[]
+    pred: AnalysisBox[]
+  }[]
+}
+
+/** 서버가 요청 때마다 만들어 얹는다. 리포트 파일에는 없다. */
+export interface NextAction {
+  code: string
+  severity: 'critical' | 'warn' | 'info'
+  title: string
+  cause: string
+  fix: string
+}
+
 export interface AnalysisReport {
   schema_version: number
   run_id: string
@@ -276,6 +325,10 @@ export interface AnalysisReport {
   }[]
   /** schema_version 2 부터. 그 이전 리포트에는 아예 없다. */
   tide?: TideBreakdown | TideFailure
+  /** schema_version 3 부터. */
+  label_issues?: LabelIssues
+  /** 파일에는 없다 — API 가 요청마다 계산해 얹는다. */
+  next_actions?: NextAction[]
   worst_classes: { name: string | null; ap50_95: number | null; message: string }[]
   conf_recommendation: {
     conf: number | null

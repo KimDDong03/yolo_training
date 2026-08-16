@@ -136,7 +136,12 @@ def create_run(
     except Exception:
         shutil.rmtree(run_dir, ignore_errors=True)
         raise
-    return db.row_to_run(db.query_one("SELECT * FROM runs WHERE id = ?", (run_id,)))
+    row = db.query_one("SELECT * FROM runs WHERE id = ?", (run_id,))
+    if row is None:
+        # 바로 위에서 INSERT 했으니 도달하지 않는다. 도달했다면 DB 가 이상한 것이므로
+        # None 을 안쪽까지 흘려보내 정체불명 에러를 만들지 말고 여기서 말한다.
+        raise RunError("실행을 만들었지만 다시 읽지 못했습니다.")
+    return db.row_to_run(row)
 
 
 def _preflight(run_id: str) -> None:

@@ -191,12 +191,17 @@ class QualityWorkerTest(unittest.TestCase):
         """
         import quality_worker
 
-        result = quality_worker.section("중복 검사", lambda: 1 / 0)
+        # 터지는 빌더를 일부러 넘긴다. 반환형이 dict 가 아닌 것도 의도다.
+        result = quality_worker.section("중복 검사", lambda: 1 / 0)  # type: ignore[arg-type]
         self.assertTrue(result["failed"])
         self.assertIn("중복 검사", result["message"])
 
         # 인자가 어긋나도(리팩터 중 흔한 실수) 잡 전체가 죽지는 않는다.
-        broken = quality_worker.section("누수 검사", lambda: quality_worker.build_leakage())
+        # 일부러 잘못 부르는 것이 이 테스트의 전부다 — 타입 검사를 맞추려고 인자를
+        # 채우면 검증하려던 것이 사라진다.
+        broken = quality_worker.section(
+            "누수 검사", lambda: quality_worker.build_leakage()  # type: ignore[call-arg]
+        )
         self.assertTrue(broken["failed"])
 
     def test_single_image_fails_the_whole_job(self):

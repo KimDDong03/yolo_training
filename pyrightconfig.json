@@ -1,0 +1,11 @@
+{
+  "include": ["backend"],
+  "exclude": [
+    "**/__pycache__",
+    "**/node_modules",
+    "backend/bundle",
+    "storage"
+  ],
+  "extraPaths": ["backend", "backend/hooks"],
+  "pythonVersion": "3.11"
+}

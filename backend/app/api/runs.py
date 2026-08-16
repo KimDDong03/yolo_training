@@ -80,11 +80,18 @@ def create_run(payload: dict[str, Any]) -> dict[str, Any]:
     except param_schema.ValidationError as exc:
         raise HTTPException(422, str(exc)) from exc
 
-    devices = payload.get("devices")
-    if devices is None:
-        devices = [g["index"] for g in gpu.list_gpus()][:1]
-    if not isinstance(devices, list) or any(not isinstance(d, int) for d in devices):
+    raw_devices = payload.get("devices")
+    if raw_devices is None:
+        raw_devices = [g["index"] for g in gpu.list_gpus()][:1]
+    if not isinstance(raw_devices, list):
         raise HTTPException(422, "devices 는 GPU 번호의 배열이어야 합니다.")
+    # 검사하면서 바로 담는다. 따로 확인하고 나중에 변환하면 아래로 넘어가는 값의 타입이
+    # 서명(create_run 의 list[int])과 어긋난 채로 남는다.
+    devices: list[int] = []
+    for d in raw_devices:
+        if not isinstance(d, int):
+            raise HTTPException(422, "devices 는 GPU 번호의 배열이어야 합니다.")
+        devices.append(d)
     if len(devices) != len(set(devices)):
         # device="0,0" 을 넘기면 ultralytics 가 같은 GPU 를 두 장으로 알고 DDP 를 시도한다.
         raise HTTPException(422, "같은 GPU 번호를 두 번 지정할 수 없습니다.")

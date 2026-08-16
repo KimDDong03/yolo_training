@@ -66,6 +66,38 @@ EXPORT_FORMATS = {"onnx", "torchscript", "engine"}
 GPU_FORMATS = {"engine"}
 
 
+def number(
+    args: dict[str, Any], key: str, default: int, low: int, high: int, label: str
+) -> int:
+    """요청에서 정수 하나를 받는다. 범위를 벗어나거나 숫자가 아니면 JobError.
+
+    int(...) 를 그냥 부르면 "bad" 가 ValueError 로 새어 나가 422 가 아니라 500 이 된다.
+    사용자에게는 서버가 터진 것으로 보이고, 무엇이 잘못됐는지도 알 수 없다.
+    """
+    try:
+        value = int(args.get(key, default))
+    except (TypeError, ValueError) as exc:
+        raise JobError(f"{label}는 숫자여야 합니다.") from exc
+    if not low <= value <= high:
+        raise JobError(f"{label}는 {low}~{high} 이어야 합니다.")
+    return value
+
+
+def flag(args: dict[str, Any], key: str, label: str) -> bool:
+    """요청에서 참/거짓 하나를 받는다.
+
+    bool(...) 로 받으면 안 된다. bool("false") 는 True 라서 문자열 "false" 가 정반대로
+    해석된다 — 기록을 지우는 스위치(tune 의 restart)에서는 그대로 사고가 된다.
+    느슨하게 받아 잘못 해석하느니 거절하고 이유를 말한다.
+    """
+    value = args.get(key, False)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+        return value.strip().lower() == "true"
+    raise JobError(f"{label}는 true 또는 false 여야 합니다.")
+
+
 def _is_contained(relative: str) -> bool:
     """소유자 폴더 안을 가리키는 상대 경로인가.
 
@@ -91,12 +123,15 @@ def _validate_export(args: dict[str, Any]) -> dict[str, Any]:
         # 소유자 폴더 밖의 파일을 내보내지 못하게 한다. 경로는 상대로만 저장한다 —
         # 절대 경로를 넣으면 폴더를 옮겼을 때 깨진다(scripts/relocate.py 가 손대지 않는다).
         raise JobError("실행 폴더 안의 상대 경로만 지정할 수 있습니다.")
+    # 예전에는 범위 검사가 없었다. 터무니없는 값은 워커 안에서 터져 "실패한 잡" 으로만
+    # 보인다 — 시작 전에 422 로 거절하는 편이 낫다. 범위는 분석 잡과 같게 맞췄다.
+    imgsz = number(args, "imgsz", 640, 32, 4096, "이미지 크기")
     return {
         "format": fmt,
         "weights": weights,
-        "imgsz": int(args.get("imgsz", 640)),
-        "half": bool(args.get("half", False)),
-        "dynamic": bool(args.get("dynamic", False)),
+        "imgsz": imgsz,
+        "half": flag(args, "half", "반정밀도"),
+        "dynamic": flag(args, "dynamic", "동적 크기"),
     }
 
 
@@ -122,16 +157,16 @@ def _validate_analyze(args: dict[str, Any]) -> dict[str, Any]:
     weights = str(args.get("weights", "train/weights/best.pt"))
     if not _is_contained(weights):
         raise JobError("실행 폴더 안의 상대 경로만 지정할 수 있습니다.")
-    imgsz = int(args.get("imgsz", 640))
-    if not 32 <= imgsz <= 4096:
-        raise JobError("이미지 크기는 32~4096 이어야 합니다.")
+    imgsz = number(args, "imgsz", 640, 32, 4096, "이미지 크기")
     return {
         "weights": weights,
         "imgsz": imgsz - imgsz % 32,
-        "batch": max(1, min(int(args.get("batch", 8)), 64)),
+        # 예전에는 max(1, min(..., 64)) 로 조용히 깎았다. 1000 을 넣은 사용자는 64 로
+        # 돌아간 줄 모른다. 이 모듈의 나머지 숫자는 전부 범위를 벗어나면 거절한다.
+        "batch": number(args, "batch", 8, 1, 64, "배치 크기"),
         # 요청이 GPU 를 직접 고르지 못하게 한다. 학습이 쓰는 GPU 에 얹으면 학습이 죽는다 —
         # 비어 있을 때만 서버가 배정한다.
-        "use_gpu": bool(args.get("use_gpu", False)),
+        "use_gpu": flag(args, "use_gpu", "GPU 사용 여부"),
     }
 
 
@@ -166,17 +201,11 @@ register(
 
 
 def _validate_quality(args: dict[str, Any]) -> dict[str, Any]:
-    # int(...) 를 그냥 부르면 "bad" 가 ValueError 로 새어 나가 422 가 아니라 500 이 된다.
-    try:
-        imgsz = int(args.get("imgsz", 224))
-    except (TypeError, ValueError) as exc:
-        raise JobError("이미지 크기는 숫자여야 합니다.") from exc
-    if not 64 <= imgsz <= 640:
-        raise JobError("이미지 크기는 64~640 이어야 합니다.")
+    imgsz = number(args, "imgsz", 224, 64, 640, "이미지 크기")
     return {
         "imgsz": imgsz - imgsz % 32,
         # analyze 와 같은 이유로 GPU 번호를 요청이 직접 고르지 못하게 한다.
-        "use_gpu": bool(args.get("use_gpu", False)),
+        "use_gpu": flag(args, "use_gpu", "GPU 사용 여부"),
     }
 
 
@@ -235,29 +264,9 @@ def _validate_tune(args: dict[str, Any]) -> dict[str, Any]:
     except models.ModelError as exc:
         raise JobError(str(exc)) from exc
 
-    def number(key: str, default: int, low: int, high: int, label: str) -> int:
-        # int(...) 를 그냥 부르면 "bad" 가 ValueError 로 새어 나가 422 가 아니라 500 이 된다.
-        try:
-            value = int(args.get(key, default))
-        except (TypeError, ValueError) as exc:
-            raise JobError(f"{label}는 숫자여야 합니다.") from exc
-        if not low <= value <= high:
-            raise JobError(f"{label}는 {low}~{high} 이어야 합니다.")
-        return value
-
-    def flag(key: str, label: str) -> bool:
-        # bool(...) 로 받으면 안 된다. bool("false") 는 True 라서 문자열 "false" 가
-        # **기록을 지우는 쪽**으로 해석된다. 지우는 스위치는 느슨하게 받지 않는다.
-        value = args.get(key, False)
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
-            return value.strip().lower() == "true"
-        raise JobError(f"{label}는 true 또는 false 여야 합니다.")
-
-    iterations = number("iterations", 20, 2, 200, "시도 횟수")
-    epochs = number("epochs", 10, 1, 1000, "에폭 수")
-    gpus = number("gpus", 1, 0, 64, "GPU 장수")
+    iterations = number(args, "iterations", 20, 2, 200, "시도 횟수")
+    epochs = number(args, "epochs", 10, 1, 1000, "에폭 수")
+    gpus = number(args, "gpus", 1, 0, 64, "GPU 장수")
 
     # imgsz / batch / fraction 은 폼과 같은 관문을 지난다. 학습 인자로 그대로 흘러간다.
     from app.services import param_schema
@@ -283,7 +292,7 @@ def _validate_tune(args: dict[str, Any]) -> dict[str, Any]:
         "batch": int(params["batch"]),
         "fraction": float(params["fraction"]),
         # 이어하기가 기본이다. 몇 시간짜리 잡을 실수로 날리지 않게 한다.
-        "restart": flag("restart", "처음부터 다시"),
+        "restart": flag(args, "restart", "처음부터 다시"),
     }
 
 

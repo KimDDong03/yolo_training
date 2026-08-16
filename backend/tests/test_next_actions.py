@@ -15,16 +15,18 @@ from app.services import next_actions  # noqa: E402
 
 def report(
     *,
-    map50=0.7,
-    map50_95=0.5,
-    precision=0.7,
-    recall=0.6,
-    instances=1000,
-    reliable=True,
-    conf=0.25,
-    tide=None,
-    labels=None,
-    worst=(),
+    # None 을 넘기는 테스트가 있다 — "아직 못 잰 값" 이 리포트에 그대로 들어오는 경우다.
+    # 기본값만 보고 float 로 추론되면 그 테스트가 타입 오류로 잡힌다.
+    map50: float | None = 0.7,
+    map50_95: float | None = 0.5,
+    precision: float | None = 0.7,
+    recall: float | None = 0.6,
+    instances: int = 1000,
+    reliable: bool = True,
+    conf: float | None = 0.25,
+    tide: dict | None = None,
+    labels: dict | None = None,
+    worst: tuple = (),
 ) -> dict:
     return {
         "overall": {

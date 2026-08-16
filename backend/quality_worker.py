@@ -19,6 +19,7 @@ import json
 import sys
 import time
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -163,7 +164,7 @@ def save_cache(directory: Path, imgsz: int, keys, hashes, thumbs, embeds, digest
 
 # ------------------------------------------------------------------ 섹션
 
-def section(label: str, build):
+def section(label: str, build: Callable[[], dict]) -> dict:
     """한 섹션이 깨져도 나머지 리포트는 살린다.
 
     조용히 키를 빼면 "예전 리포트라 없는 것" 과 구분되지 않는다. 실패를 값으로 남긴다.

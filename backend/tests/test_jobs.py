@@ -119,6 +119,56 @@ class PathBoundaryTest(JobsTestBase):
             self.jobs.spec_for("export").validate({"format": "coreml"})
 
 
+class ArgumentTypeTest(JobsTestBase):
+    """잘못된 입력은 500 이 아니라 422 로 나가야 한다.
+
+    int(...) 를 그냥 부르면 "bad" 가 ValueError 로 새어 나가 서버가 터진 것으로 보이고,
+    bool("false") 는 True 라서 문자열이 정반대로 해석된다. JobError 만 422 가 된다
+    (api/jobs.py). 네 잡 종류가 같은 헬퍼(jobs.number / jobs.flag)를 쓴다.
+    """
+
+    NUMERIC = (
+        ("export", {"format": "onnx"}, "imgsz"),
+        ("analyze", {}, "imgsz"),
+        ("analyze", {}, "batch"),
+        ("quality", {}, "imgsz"),
+        ("tune", {"model": "yolo11n.pt"}, "epochs"),
+    )
+    BOOLEAN = (
+        ("export", {"format": "onnx"}, "half"),
+        ("analyze", {}, "use_gpu"),
+        ("quality", {}, "use_gpu"),
+        ("tune", {"model": "yolo11n.pt"}, "restart"),
+    )
+
+    def test_non_numeric_is_rejected_not_crashed(self) -> None:
+        for kind, base, key in self.NUMERIC:
+            with self.subTest(kind=kind, key=key):
+                with self.assertRaises(self.jobs.JobError):
+                    self.jobs.spec_for(kind).validate({**base, key: "bad"})
+
+    def test_out_of_range_is_rejected(self) -> None:
+        for kind, base, key in self.NUMERIC:
+            with self.subTest(kind=kind, key=key):
+                with self.assertRaises(self.jobs.JobError):
+                    self.jobs.spec_for(kind).validate({**base, key: 10**9})
+
+    def test_the_string_false_does_not_mean_true(self) -> None:
+        """bool("false") 는 True 다. 여기가 뒤집히면 스위치가 정반대로 동작한다."""
+        for kind, base, key in self.BOOLEAN:
+            with self.subTest(kind=kind, key=key):
+                args = self.jobs.spec_for(kind).validate({**base, key: "false"})
+                self.assertIs(args[key], False)
+                args = self.jobs.spec_for(kind).validate({**base, key: "true"})
+                self.assertIs(args[key], True)
+
+    def test_values_that_are_neither_are_rejected(self) -> None:
+        for kind, base, key in self.BOOLEAN:
+            with self.subTest(kind=kind, key=key):
+                with self.assertRaises(self.jobs.JobError):
+                    self.jobs.spec_for(kind).validate({**base, key: "yes"})
+
+
 class LiveForTest(JobsTestBase):
     def test_live_for_ignores_dead_jobs(self) -> None:
         self.insert_job(pid=None)

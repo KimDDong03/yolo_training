@@ -182,31 +182,41 @@ export function QualityPanel({ dataset }: { dataset: Dataset | null | undefined 
                     묶음 {dup.group_total.toLocaleString()}개 중 {dup.groups.length}개만 보여줍니다.
                   </p>
                 )}
-                {dup.groups.map((g, gi) => (
-                  <div key={gi} style={{ marginTop: 10 }}>
-                    <div className="small muted">
-                      {DELETABLE.has(g.kind) ? `${g.size - 1}장 지워도 됨` : '눈으로 확인'} ·{' '}
-                      {KIND_LABEL[g.kind]} · {g.size}장
-                    </div>
-                    <div className="row small wrap" style={{ gap: 8, marginTop: 4 }}>
-                      {g.images.map((im) =>
-                        canShowImages ? (
-                          <Thumb
-                            key={im.path}
-                            datasetId={dataset.id}
-                            path={im.path}
-                            tag={im.split === 'train' ? '학습' : '검증'}
-                            onZoom={setZoom}
-                          />
-                        ) : (
-                          <span key={im.path} className="muted">
-                            {name(im.path)}
-                          </span>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                ))}
+                {/* 크기 2 짜리 묶음이 수십 개면 화면이 길어져 아래 카드가 밀린다.
+                    판단에 필요한 값(요약 문장과 위 건수)은 밖에 두고 목록만 접는다.
+                    6 은 잰 값이 아니라 화면 길이 판단이다 — 실측 근거는 없다. */}
+                {dup.groups.length > 0 && (
+                  <details open={dup.groups.length <= 6} style={{ marginTop: 10 }}>
+                    <summary className="small muted">
+                      중복 묶음 {dup.groups.length}개 보기
+                    </summary>
+                    {dup.groups.map((g, gi) => (
+                      <div key={gi} style={{ marginTop: 10 }}>
+                        <div className="small muted">
+                          {DELETABLE.has(g.kind) ? `${g.size - 1}장 지워도 됨` : '눈으로 확인'} ·{' '}
+                          {KIND_LABEL[g.kind]} · {g.size}장
+                        </div>
+                        <div className="row small wrap" style={{ gap: 8, marginTop: 4 }}>
+                          {g.images.map((im) =>
+                            canShowImages ? (
+                              <Thumb
+                                key={im.path}
+                                datasetId={dataset.id}
+                                path={im.path}
+                                tag={im.split === 'train' ? '학습' : '검증'}
+                                onZoom={setZoom}
+                              />
+                            ) : (
+                              <span key={im.path} className="muted">
+                                {name(im.path)}
+                              </span>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </details>
+                )}
               </>
             ) : null}
           </div>

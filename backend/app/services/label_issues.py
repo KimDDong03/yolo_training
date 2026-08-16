@@ -33,11 +33,8 @@ VERY_HIGH_CONF = 0.90
 TIGHT_IOU = 0.75
 # 정답 박스끼리 이만큼 겹치면 중복으로 본다. 낮추면 군중·정체 사진에서 오탐이 난다.
 DUP_GT_IOU = 0.80
-# 그 자리에 물체 비슷한 것조차 없다고 말할 수 있는 선 (오류 분해의 배경 기준과 같다).
-NO_SIGNAL_IOU = 0.10
 # 이 클래스에 대한 모델 판단을 근거로 쓸 수 있는 최소치.
 MIN_CLASS_PRECISION = 0.50
-MIN_CLASS_RECALL = 0.50
 MIN_CLASS_INSTANCES = 20
 # 모델 전체가 이보다 나쁘면 모델 근거를 아예 쓰지 않는다.
 MIN_MODEL_MAP50 = 0.30
@@ -55,7 +52,6 @@ CONTEXT_BOXES = 12
 LABELS = {
     "missing_label": "라벨 누락 의심",
     "wrong_class": "클래스 오기 의심",
-    "phantom_label": "빈 자리 정답",
     "conflicting_gt": "한 물체에 두 클래스",
     "duplicate_gt": "정답 박스 중복",
     "unlabeled_object": "라벨 없는 물체 의심",
@@ -63,21 +59,36 @@ LABELS = {
 # 근거가 강한 순. 상한에 걸릴 때 무엇을 먼저 남길지가 이 순서다.
 #
 # 실측(2026-08-16, african-wildlife + HomeObjects-3K 의 후보 47건 전수 판정):
-# wrong_class 7/7, unlabeled_object 2/2, missing_label 27/36, phantom_label 0/2.
-# 그래서 wrong_class 를 맨 앞으로, phantom_label 을 맨 뒤로 옮겼다. phantom_label 은
-# "모델이 못 찾았으니 라벨이 이상하다" 는 전제인데 두 건 다 물체가 실제로 있었고
-# 모델이 놓친 것뿐이었다. conflicting_gt / duplicate_gt 는 아직 한 번도 발화한 적이
-# 없어 미측정이라 자리를 그대로 뒀다.
+# wrong_class 7/7, unlabeled_object 2/2, missing_label 26/36
+# (당초 27/36 이었으나 사용자 재검토로 1건이 오탐으로 정정됐다 — 천 족자를 photo frame).
+# 그래서 wrong_class 를 맨 앞으로 옮겼다. conflicting_gt / duplicate_gt 는 아직 한 번도
+# 발화한 적이 없어 미측정이라 자리를 그대로 뒀다.
+#
+# ── phantom_label 은 뺐다 (2026-08-16). 되살리지 마라. ────────────────────────
+# "정답 자리에 conf 0.001 까지 낮춰도 아무 검출이 없으니 라벨이 이상하다" 는 신호였다.
+# 데이터셋 7종의 무신호 정답 40건을 전수로 뽑아 사진으로 판정했다(36건 판정, 4건 불가):
+# 라벨 오류 10 / 모델이 못 본 것 26 = 27.8%.
+#
+# 결정적인 것은 **이 레포가 쓰는 3종에서 0/19** 라는 것이다. HomeObjects 18건이 전부
+# 실재하는 물체였다(샹들리에 갓 6개가 한 사진, 유리병 속 화초 3개가 한 사진 — 작고 어둡고
+# 붙어 있어 모델이 못 볼 뿐이다). 남은 정탐 10건은 KITTI 9 + construction-ppe 1 로,
+# 전부 이 레포에 없는 데이터셋이다.
+#
+# 경위가 뒤집힌 적이 있으니 숫자를 인용하기 전에 .codex/phase-5.md 를 읽어라 —
+# 3종만 봤을 때 2/19 → 주행 데이터셋을 넣어 15/36 → 사용자가 사진을 검토해 10/36.
+#
+# 이 모듈 첫머리가 적어 둔 원칙이 기준이다. 27.8% 는 목록 전체의 신뢰를 깎는다.
+# 살아 있는 신호들은 100% / 100% / 75% 다.
+# ─────────────────────────────────────────────────────────────────────────────
 KIND_ORDER = (
     "wrong_class",
     "missing_label",
     "conflicting_gt",
     "duplicate_gt",
     "unlabeled_object",
-    "phantom_label",
 )
 # 모델의 판단을 근거로 쓰는 신호. 모델이 못 믿을 상태면 이것들만 통째로 끈다.
-MODEL_KINDS = {"missing_label", "unlabeled_object", "wrong_class", "phantom_label"}
+MODEL_KINDS = {"missing_label", "unlabeled_object", "wrong_class"}
 
 SCOPE_NOTE = (
     "이 후보는 검증(val) 셋에서만 찾은 것입니다. 학습(train) 셋의 라벨은 검사하지 "
@@ -241,31 +252,6 @@ def build(
                             f"수 있습니다."
                         ),
                     })
-
-            for local in range(g1 - g0):
-                if not gts["miss"][g0 + local]:
-                    continue
-                if float(gts["best_iou"][g0 + local]) >= NO_SIGNAL_IOU:
-                    continue
-                cls = int(gt_cls[local])
-                if not _usable(rows.get(cls), "recall", MIN_CLASS_RECALL):
-                    continue
-                box = _gt_box(local)
-                if _area(np.asarray(box)) < MIN_BOX_AREA:
-                    continue
-                recall = rows[cls]["recall"]
-                findings.append({
-                    "image": image, "kind": "phantom_label", "cls": cls,
-                    "conf": None, "iou": 0.0,
-                    "score": 1.0 - float(gts["best_iou"][g0 + local]),
-                    "box": box, "ref_box": None, "ref_name": None,
-                    "message": (
-                        f"{names.get(cls, cls)} 정답 박스인데, 신뢰도를 0.001 까지 낮춰도 "
-                        f"모델은 이 자리에서 어떤 클래스도 검출하지 못했습니다. "
-                        f"{names.get(cls, cls)} 의 재현율은 {recall:.2f} 로 낮지 않습니다 — "
-                        f"박스 좌표가 어긋났거나 실제로는 물체가 없는 자리일 수 있습니다."
-                    ),
-                })
 
         # 라벨만 보는 신호. 모델이 어떤 상태든 유효하다.
         pairs = diagnose.iou_matrix(record["gt_xyxy"], record["gt_xyxy"])

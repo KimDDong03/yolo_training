@@ -125,28 +125,28 @@ class WrongClassTest(unittest.TestCase):
         self.assertNotIn("wrong_class", kinds(report))
 
 
-class PhantomLabelTest(unittest.TestCase):
-    def test_ground_truth_nothing_overlapped_is_flagged(self) -> None:
-        """신뢰도 0.001 까지 낮춰도 아무것도 안 걸리면 그 자리엔 물체 비슷한 것도 없다."""
+class RetiredPhantomLabelTest(unittest.TestCase):
+    """접은 신호가 조용히 되살아나지 않게 막는다.
+
+    "정답 자리에 conf 0.001 까지 낮춰도 검출이 없으니 라벨이 이상하다" 는 판정이었다.
+    데이터셋 7종 40건 전수 판정에서 이 레포의 3종은 0/19 였다. 근거는 .codex/phase-5.md.
+    """
+
+    def test_a_ground_truth_with_no_detection_produces_nothing(self) -> None:
         report = issues([record("1.jpg", [(0, BIG)], [(0, 0.9, FAR)])])
-        self.assertIn("phantom_label", kinds(report))
-
-    def test_ground_truth_something_overlapped_is_not_flagged(self) -> None:
-        near = [12.0, 12.0, 30.0, 30.0]
-        report = issues([record("1.jpg", [(0, BIG)], [(1, 0.4, near)])])
         self.assertNotIn("phantom_label", kinds(report))
+        # 그 사진에서 나오는 후보는 배경 오검출 쪽뿐이어야 한다.
+        self.assertNotIn("phantom_label", [k["kind"] for k in report["kinds"]])
 
-    def test_needs_a_class_the_model_normally_finds(self) -> None:
-        blind = dict(strong(0, "a"), recall=0.2)
-        report = issues(
-            [record("1.jpg", [(0, BIG)], [(0, 0.9, FAR)])],
-            per_class=[blind, strong(1, "b")],
-        )
-        self.assertNotIn("phantom_label", kinds(report))
+    def test_the_kind_is_gone_from_every_table(self) -> None:
+        self.assertNotIn("phantom_label", label_issues.LABELS)
+        self.assertNotIn("phantom_label", label_issues.KIND_ORDER)
+        self.assertNotIn("phantom_label", label_issues.MODEL_KINDS)
 
-    def test_tiny_ground_truth_is_never_flagged(self) -> None:
-        report = issues([record("1.jpg", [(0, TINY)], [(0, 0.9, FAR)])])
-        self.assertNotIn("phantom_label", kinds(report))
+    def test_its_private_thresholds_are_gone_too(self) -> None:
+        """phantom 전용이던 상수. 남겨 두면 다음 사람이 규칙이 있는 줄 안다."""
+        for dead in ("NO_SIGNAL_IOU", "MIN_CLASS_RECALL"):
+            self.assertFalse(hasattr(label_issues, dead), dead)
 
 
 class LabelOnlyTest(unittest.TestCase):
@@ -189,7 +189,7 @@ class GuardTest(unittest.TestCase):
 
 class ShapeTest(unittest.TestCase):
     def build_many(self, count: int) -> list[dict]:
-        # 예측 하나를 겹쳐 둬야 '빈 자리 정답' 이 섞이지 않아 중복만 세진다.
+        # 예측 하나를 겹쳐 둬야 중복만 세진다.
         twin = [10.0, 10.0, 29.0, 30.0]
         return [
             record(f"{i}.jpg", [(0, BIG), (0, twin)], [(0, 0.95, BIG)])
@@ -232,12 +232,58 @@ class ShapeTest(unittest.TestCase):
         self.assertIn("학습 클래스 목록에 없는 물체", issues([])["scope_note"])
 
     def test_kind_order_follows_measured_precision(self) -> None:
-        # 실측(후보 47건 전수): wrong_class 7/7, missing_label 27/36, phantom_label 0/2.
+        # 실측(후보 47건 전수): wrong_class 7/7, unlabeled_object 2/2, missing_label 26/36.
         # 순서를 되돌리려면 .codex/phase-5.md 의 표를 먼저 읽어야 한다.
         order = label_issues.KIND_ORDER
         self.assertLess(order.index("wrong_class"), order.index("missing_label"))
-        self.assertEqual(order[-1], "phantom_label")
         self.assertEqual(set(order), set(label_issues.LABELS))
+
+    def test_retired_kinds_are_stripped_from_stored_reports(self) -> None:
+        """저장소에 이미 있는 리포트를 사용자는 재분석 없이 열어 본다.
+
+        접은 종류를 그대로 두면 접기로 한 바로 그 후보가 계속 뜬다.
+        건수도 같이 줄여야 요약 줄과 next_actions 가 같은 숫자를 말한다.
+        """
+        from app.api import runs
+
+        stored = {
+            "total": 5, "shown": 3,
+            "kinds": [
+                {"kind": "missing_label", "label": "라벨 누락 의심", "count": 3},
+                {"kind": "phantom_label", "label": "빈 자리 정답", "count": 2},
+            ],
+            "items": [
+                {"name": "1.jpg", "findings": [
+                    {"kind": "missing_label", "message": "살아 있는 문장"},
+                    {"kind": "phantom_label", "message": "빈 자리 정답 …"},
+                ]},
+                # phantom 만 있던 사진은 통째로 빠져야 한다.
+                {"name": "2.jpg", "findings": [{"kind": "phantom_label", "message": "…"}]},
+            ],
+        }
+        runs._drop_retired_kinds(stored)
+        self.assertEqual([k["kind"] for k in stored["kinds"]], ["missing_label"])
+        self.assertEqual(stored["total"], 3)
+        self.assertEqual([i["name"] for i in stored["items"]], ["1.jpg"])
+        self.assertEqual(
+            [f["kind"] for f in stored["items"][0]["findings"]], ["missing_label"]
+        )
+        self.assertEqual(stored["shown"], 1)
+
+    def test_live_kinds_are_left_exactly_as_stored(self) -> None:
+        """다른 종류의 설명에는 그 리포트에서만 나오는 건수·신뢰도가 박혀 있다."""
+        from app.api import runs
+
+        original = "이 사진에는 a 정답이 3개 있고 모델이 그중 2개를 맞췄습니다."
+        stored = {
+            "total": 1, "shown": 1,
+            "kinds": [{"kind": "missing_label", "label": "라벨 누락 의심", "count": 1}],
+            "items": [{"findings": [{"kind": "missing_label", "message": original}]}],
+        }
+        runs._drop_retired_kinds(stored)
+        self.assertEqual(stored["items"][0]["findings"][0]["message"], original)
+        self.assertEqual(stored["total"], 1)
+        self.assertEqual(stored["shown"], 1)
 
     def test_every_finding_carries_a_korean_sentence(self) -> None:
         report = issues(
@@ -245,7 +291,6 @@ class ShapeTest(unittest.TestCase):
                 record("1.jpg", [(0, BIG)], [(0, 0.95, BIG), (0, 0.95, FAR)]),
                 record("2.jpg", [(1, BIG)], [(0, 0.95, BIG)]),
                 record("3.jpg", [(0, BIG), (1, BIG)], []),
-                record("4.jpg", [(0, BIG)], [(0, 0.9, FAR)]),
             ]
         )
         found = [f for i in report["items"] for f in i["findings"]]

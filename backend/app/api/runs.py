@@ -141,7 +141,39 @@ def analysis_report(run_id: str) -> dict[str, Any]:
     issues = report.get("label_issues")
     if isinstance(issues, dict) and issues.get("scope_note"):
         issues["scope_note"] = label_issues.SCOPE_NOTE
+        _drop_retired_kinds(issues)
     return report
+
+
+def _drop_retired_kinds(issues: dict[str, Any]) -> None:
+    """접은 종류를 저장된 리포트에서도 걷어낸다 — scope_note 와 같은 이유다.
+
+    사용자는 재분석 없이 예전 리포트를 열어 본다. 그냥 두면 접기로 한 바로 그 후보가
+    계속 뜬다(`phantom_label` 이 이 경우였다). 이름을 박지 않고 `LABELS` 에 없는 종류를
+    걷어내므로, 앞으로 다른 종류를 접어도 그대로 동작한다.
+
+    `kinds[].count` 는 상한을 적용하기 **전** 건수라 `total` 에서 그만큼 빼면 정확하다.
+    `next_actions` 가 이 `total` 을 읽으므로(next_actions.py) 같이 줄여야 두 화면이
+    같은 숫자를 말한다.
+    """
+    live = label_issues.LABELS
+    retired = [k for k in issues.get("kinds") or [] if k.get("kind") not in live]
+    if not retired:
+        return
+    issues["kinds"] = [k for k in issues.get("kinds") or [] if k.get("kind") in live]
+    issues["total"] = max(
+        int(issues.get("total") or 0) - sum(int(k.get("count") or 0) for k in retired), 0
+    )
+
+    items = []
+    for item in issues.get("items") or []:
+        kept = [f for f in item.get("findings") or [] if f.get("kind") in live]
+        # 남은 발견이 없으면 사진만 덩그러니 남으므로 목록에서 뺀다.
+        if kept:
+            item["findings"] = kept
+            items.append(item)
+    issues["items"] = items
+    issues["shown"] = sum(len(item["findings"]) for item in items)
 
 
 def _data_quality(report: dict[str, Any]) -> dict[str, Any] | None:

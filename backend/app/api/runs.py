@@ -24,6 +24,7 @@ from app.services import (
     event_stream,
     gpu,
     jobs,
+    label_issues,
     models,
     next_actions,
     param_schema,
@@ -135,6 +136,11 @@ def analysis_report(run_id: str) -> dict[str, Any]:
         raise HTTPException(500, "진단 결과를 읽지 못했습니다.") from exc
     # 처방은 리포트에 굳히지 않고 여기서 얹는다 — 문구를 고치면 과거 리포트에도 바로 적용된다.
     report["next_actions"] = next_actions.build(report, _data_quality(report))
+    # 라벨 오류 후보의 안내 문구도 같은 이유로 굳히지 않는다. 저장된 리포트에는 그 리포트를
+    # 만들 때의 문장이 들어 있어, 문구를 고쳐도 재분석 전까지는 옛 문장이 뜬다.
+    issues = report.get("label_issues")
+    if isinstance(issues, dict) and issues.get("scope_note"):
+        issues["scope_note"] = label_issues.SCOPE_NOTE
     return report
 
 

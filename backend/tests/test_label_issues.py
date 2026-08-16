@@ -226,6 +226,19 @@ class ShapeTest(unittest.TestCase):
         self.assertIn("val", note)
         self.assertIn("학습", note)
 
+    def test_scope_note_names_the_failure_mode_we_measured(self) -> None:
+        # 실측 오탐 9건은 전부 학습 클래스에 없는 물체였다. 사용자가 화면에서 그 패턴을
+        # 알아보지 못하면 목록 전체를 믿거나 전체를 버리는 둘 중 하나가 된다.
+        self.assertIn("학습 클래스 목록에 없는 물체", issues([])["scope_note"])
+
+    def test_kind_order_follows_measured_precision(self) -> None:
+        # 실측(후보 47건 전수): wrong_class 7/7, missing_label 27/36, phantom_label 0/2.
+        # 순서를 되돌리려면 .codex/phase-5.md 의 표를 먼저 읽어야 한다.
+        order = label_issues.KIND_ORDER
+        self.assertLess(order.index("wrong_class"), order.index("missing_label"))
+        self.assertEqual(order[-1], "phantom_label")
+        self.assertEqual(set(order), set(label_issues.LABELS))
+
     def test_every_finding_carries_a_korean_sentence(self) -> None:
         report = issues(
             [

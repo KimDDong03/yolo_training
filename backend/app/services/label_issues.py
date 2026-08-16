@@ -61,13 +61,20 @@ LABELS = {
     "unlabeled_object": "라벨 없는 물체 의심",
 }
 # 근거가 강한 순. 상한에 걸릴 때 무엇을 먼저 남길지가 이 순서다.
+#
+# 실측(2026-08-16, african-wildlife + HomeObjects-3K 의 후보 47건 전수 판정):
+# wrong_class 7/7, unlabeled_object 2/2, missing_label 27/36, phantom_label 0/2.
+# 그래서 wrong_class 를 맨 앞으로, phantom_label 을 맨 뒤로 옮겼다. phantom_label 은
+# "모델이 못 찾았으니 라벨이 이상하다" 는 전제인데 두 건 다 물체가 실제로 있었고
+# 모델이 놓친 것뿐이었다. conflicting_gt / duplicate_gt 는 아직 한 번도 발화한 적이
+# 없어 미측정이라 자리를 그대로 뒀다.
 KIND_ORDER = (
-    "missing_label",
     "wrong_class",
-    "phantom_label",
+    "missing_label",
     "conflicting_gt",
     "duplicate_gt",
     "unlabeled_object",
+    "phantom_label",
 )
 # 모델의 판단을 근거로 쓰는 신호. 모델이 못 믿을 상태면 이것들만 통째로 끈다.
 MODEL_KINDS = {"missing_label", "unlabeled_object", "wrong_class", "phantom_label"}
@@ -76,7 +83,11 @@ SCOPE_NOTE = (
     "이 후보는 검증(val) 셋에서만 찾은 것입니다. 학습(train) 셋의 라벨은 검사하지 "
     "않았습니다. 또한 여기 오르는 것은 '모델과 라벨이 어긋난 자리' 일 뿐 라벨이 틀렸다는 "
     "증거는 아닙니다 — 사진을 보고 사람이 판단하세요. 라벨을 고쳤다면 그 데이터로 다시 "
-    "학습해야 결과에 반영됩니다."
+    "학습해야 결과에 반영됩니다. "
+    "모델 판단을 근거로 쓴 항목에서 가장 흔한 오탐은 학습 클래스 목록에 없는 물체를 "
+    "비슷한 클래스로 잘못 본 경우입니다(실제 사례: 장작 난로를 table, 선반을 chair, "
+    "거울에 비친 소파를 sofa, 사자를 rhino). 목록에 없는 물체가 사진에 자주 나오는 "
+    "데이터셋일수록 이런 후보가 늘어납니다."
 )
 
 

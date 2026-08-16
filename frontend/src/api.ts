@@ -17,6 +17,8 @@ import type {
   Run,
   SystemInfo,
   TrainEvent,
+  TuneEstimate,
+  TuneReport,
   WeightCandidate,
 } from './types'
 
@@ -87,6 +89,24 @@ export const api = {
   /** 잡 산출물 서빙(/files/)을 그대로 쓴다 — 전용 엔드포인트가 없다. */
   qualityReport: (id: string) =>
     req<QualityReport>(`/api/jobs/dataset/${id}/quality/files/quality.json`),
+
+  startTune: (id: string, body: Record<string, unknown>) =>
+    req<JobStatus>(`/api/jobs/dataset/${id}/tune`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  tuneStatus: (id: string) => req<JobStatus>(`/api/jobs/dataset/${id}/tune`),
+  stopTune: (id: string) =>
+    req<JobStatus>(`/api/jobs/dataset/${id}/tune/stop`, { method: 'POST' }),
+  /** 실행 중에도 읽는다. 진행률이 이 안에 있다(잡 이벤트에는 시도 정보가 없다). */
+  tuneReport: (id: string) => req<TuneReport>(`/api/jobs/dataset/${id}/tune/files/tune.json`),
+  tuneEstimate: (datasetId: string, args: Record<string, unknown>) =>
+    req<TuneEstimate>('/api/tune-estimate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_id: datasetId, args }),
+    }),
   datasetReview: (id: string, category = '', offset = 0, limit = 24) =>
     req<DatasetReview>(
       `/api/datasets/${id}/review?category=${encodeURIComponent(category)}&offset=${offset}&limit=${limit}`,

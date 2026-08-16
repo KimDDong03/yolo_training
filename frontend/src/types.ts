@@ -214,6 +214,84 @@ export interface JobStatus {
   error?: string | null
 }
 
+/** 하이퍼파라미터 탐색 한 번의 시도. */
+export interface TuneTrial {
+  i: number
+  fitness: number
+  hyp: Record<string, number>
+  metrics: Record<string, number>
+  /** 학습이 실패한 시도. ultralytics 가 fitness 0 으로 기록하므로 비교에서 빠진다. */
+  ok: boolean
+}
+
+/**
+ * 탐색 리포트(tune.json). 실행 중에도 읽는다 — 매 시도마다 서버가 다시 쓴다.
+ *
+ * **잡 상태(running/stopped/failed)는 여기 없다.** 그건 JobStatus 가 단일 원천이다.
+ * 부분 완료는 iterations_done < iterations_target 이 말한다.
+ */
+export interface TuneReport {
+  schema_version: number
+  iterations_done: number
+  iterations_target: number
+  space: Record<string, number[]>
+  args: Record<string, unknown>
+  min_gain: number
+  trials: TuneTrial[]
+  /** 시도 1 = 변이 없는 기본값. 개선폭의 기준이다. */
+  baseline: TuneTrial | null
+  best: TuneTrial | null
+  gain: number | null
+  /** 이번 실행의 실측 경과와 그로부터 낸 남은 시간. 시작 전 추정보다 이쪽이 정확하다. */
+  elapsed_s: number | null
+  trial_time_s: number | null
+  eta_s: number | null
+  /**
+   * 확인 시도 — 기준 하이퍼파라미터를 시드만 바꿔 한 번 더 돌린 결과.
+   * delta 는 그때 벌어진 폭이고, 그만큼은 하이퍼파라미터가 한 일이 아니다.
+   */
+  noise: {
+    seeds: number[]
+    fitness: number[]
+    baseline_fitness: number
+    stdev: number
+    range: number
+  } | null
+  /** 처방을 낼 실제 문턱. (잰 흔들림 × 최고값 선택 보정)과 바닥선 중 큰 쪽. */
+  threshold: number
+  /** 지금 도는 시도의 에폭 진행. 시도 사이에는 null 이다. */
+  current?: {
+    epoch: number
+    total_epochs: number
+    batch?: number | null
+    batch_total?: number | null
+  } | null
+  available: boolean
+  reason?: string
+  items: {
+    rule: string
+    severity: string
+    changes: Record<string, { from: unknown; to: unknown }>
+    reason: string
+    effect: string
+  }[]
+  advisories: string[]
+  patch: Record<string, unknown>
+}
+
+/** 탐색 소요 예측. 근사치이고 가정을 함께 내려보낸다. */
+export interface TuneEstimate {
+  ok: boolean
+  reason?: string
+  trial_time_s?: number
+  total_time_s?: number
+  iterations?: number
+  assumptions?: string[]
+  /** 시도를 짧게 잡았을 때 무엇을 잃는지. 서버가 실측 근거와 함께 문장으로 준다. */
+  warnings?: string[]
+  note?: string
+}
+
 export interface AnalysisBox {
   cls: number
   name: string

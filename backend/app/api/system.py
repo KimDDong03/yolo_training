@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from app.core import db
-from app.services import estimate, gpu, models, param_schema
+from app.services import estimate, gpu, jobs, models, param_schema, tune
 
 router = APIRouter(prefix="/api", tags=["system"])
 
@@ -54,6 +54,30 @@ def estimate_run(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(422, "devices 는 GPU 번호의 배열이어야 합니다.")
 
     return estimate.estimate(db.row_to_dataset(row), params, devices)
+
+
+@router.post("/tune-estimate")
+def estimate_tune(payload: dict[str, Any]) -> dict[str, Any]:
+    """탐색을 이 설정으로 돌리면 얼마나 걸리는지. 부작용 없는 계산이다.
+
+    /estimate 를 재사용하지 않고 따로 둔 이유: 탐색은 학습을 N번 반복하고 데이터 비율까지
+    곱해야 해서 그 산식과 가정 문장이 서버에 있어야 한다. 프론트에서 곱하면 문구도
+    프론트가 지어내게 된다.
+    """
+    row = db.query_one(
+        "SELECT * FROM datasets WHERE id = ?", (payload.get("dataset_id"),)
+    )
+    if row is None:
+        raise HTTPException(404, "데이터셋을 찾을 수 없습니다.")
+
+    try:
+        # 시작 버튼이 쓰는 것과 같은 검증을 지난다. 추정만 통과하고 시작이 422 로 죽으면 안 된다.
+        args = jobs.spec_for("tune").validate(payload.get("args") or {})
+    except jobs.JobError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    devices = [int(g["index"]) for g in gpu.list_gpus()][: int(args["gpus"])]  # type: ignore[arg-type]
+    return tune.estimate_total(db.row_to_dataset(row), args, devices)
 
 
 @router.get("/system/info")

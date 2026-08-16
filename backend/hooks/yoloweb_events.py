@@ -20,6 +20,16 @@ from typing import Any
 BATCH_INTERVAL = 0.5
 
 
+def _no_preview() -> bool:
+    """에폭별 예측 미리보기를 만들지 않는 모드인가.
+
+    하이퍼파라미터 탐색이 켠다. 탐색은 같은 폴더에서 학습을 N번 반복하므로 시도마다 같은
+    에폭 번호로 미리보기를 서로 덮어쓰고, 쓸모없는 이미지를 시도 수만큼 쌓는다.
+    학습 경로는 이 변수를 설정하지 않으므로 동작이 변하지 않는다.
+    """
+    return bool(os.environ.get("YOLOWEB_NO_PREVIEW"))
+
+
 def _rank() -> int:
     try:
         return int(os.environ.get("RANK", -1))
@@ -266,7 +276,7 @@ def on_val_start(validator) -> None:
     이 콜백은 그 감쇠 연산(:163) 뒤, 실제 플롯 지점(:242) 앞인 on_val_start(:211) 에서 돈다.
     """
     writer = _w()
-    if not writer or not getattr(validator, "training", False):
+    if not writer or _no_preview() or not getattr(validator, "training", False):
         return
     try:
         validator.args.plots = True
@@ -275,6 +285,8 @@ def on_val_start(validator) -> None:
 
 
 def _copy_epoch_images(writer: EventWriter, trainer, epoch: int) -> None:
+    if _no_preview():
+        return
     save_dir = Path(getattr(trainer, "save_dir", "") or "")
     if not save_dir.is_dir():
         return

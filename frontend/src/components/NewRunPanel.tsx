@@ -7,6 +7,7 @@ import { DatasetReviewPanel } from './DatasetReviewPanel'
 import { QualityPanel } from './QualityPanel'
 import { useConfirm, usePrompt } from './ui/Dialog'
 import { Recommendations } from './Recommendations'
+import { TunePanel } from './TunePanel'
 import { Field, type FieldStatus } from './ui/Field'
 import { useToast } from './ui/Toast'
 
@@ -350,6 +351,20 @@ export function NewRunPanel({
           onApply={(patch) => {
             setValues((s) => ({ ...s, ...patch }))
             setAppliedPreset(null) // 프리셋 위에 덮어썼으므로 더 이상 그 프리셋이 아니다
+          }}
+        />
+      )}
+
+      {/* 규칙 추천이 데이터셋 통계로 정하는 값 위에, 실제로 돌려 본 값을 얹는다.
+          결과는 같은 경로로 폼에 들어간다. */}
+      {dataset && schema && (
+        <TunePanel
+          dataset={dataset}
+          model={String(values.model ?? '')}
+          gpuCount={gpus.length}
+          onApply={(patch) => {
+            setValues((s) => ({ ...s, ...patch }))
+            setAppliedPreset(null)
           }}
         />
       )}

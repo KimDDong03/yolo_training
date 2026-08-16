@@ -47,6 +47,9 @@ class JobSpec:
     # GPU 를 못 잡았을 때 CPU 로 내려서라도 돌릴 것인가.
     # TensorRT 변환처럼 GPU 가 없으면 아예 불가능한 작업은 False 로 두고 거절한다.
     gpu_optional: bool = False
+    # 몇 장을 예약할 것인가. 분석·품질 검사는 한 장이면 충분하지만 탐색은 여러 장을 쓴다.
+    # 기본이 1이라 기존 잡의 배정 결과는 변하지 않는다. 실제 배정은 run_manager.start_job.
+    devices_wanted: Callable[[dict[str, Any]], int] = lambda _: 1
 
 
 SPECS: dict[str, JobSpec] = {}
@@ -215,6 +218,108 @@ register(
         validate=_validate_export,
         needs_gpu=lambda args: args["format"] in GPU_FORMATS,
         build_argv=_argv_export,
+    )
+)
+
+
+# ------------------------------------------------------------------ 하이퍼파라미터 탐색
+
+
+def _validate_tune(args: dict[str, Any]) -> dict[str, Any]:
+    # 모델은 학습과 같은 계약을 쓴다. _validate_export 의 상대경로 검사는 run 산출물 전용이라
+    # 절대 경로로 지정한 사전학습 가중치를 거절한다 — 여기 쓰면 정상 입력이 422 가 된다.
+    from app.services import models
+
+    try:
+        model = models.require(str(args.get("model", "")))
+    except models.ModelError as exc:
+        raise JobError(str(exc)) from exc
+
+    def number(key: str, default: int, low: int, high: int, label: str) -> int:
+        # int(...) 를 그냥 부르면 "bad" 가 ValueError 로 새어 나가 422 가 아니라 500 이 된다.
+        try:
+            value = int(args.get(key, default))
+        except (TypeError, ValueError) as exc:
+            raise JobError(f"{label}는 숫자여야 합니다.") from exc
+        if not low <= value <= high:
+            raise JobError(f"{label}는 {low}~{high} 이어야 합니다.")
+        return value
+
+    def flag(key: str, label: str) -> bool:
+        # bool(...) 로 받으면 안 된다. bool("false") 는 True 라서 문자열 "false" 가
+        # **기록을 지우는 쪽**으로 해석된다. 지우는 스위치는 느슨하게 받지 않는다.
+        value = args.get(key, False)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+            return value.strip().lower() == "true"
+        raise JobError(f"{label}는 true 또는 false 여야 합니다.")
+
+    iterations = number("iterations", 20, 2, 200, "시도 횟수")
+    epochs = number("epochs", 10, 1, 1000, "에폭 수")
+    gpus = number("gpus", 1, 0, 64, "GPU 장수")
+
+    # imgsz / batch / fraction 은 폼과 같은 관문을 지난다. 학습 인자로 그대로 흘러간다.
+    from app.services import param_schema
+
+    try:
+        params = param_schema.validate(
+            {
+                "imgsz": args.get("imgsz", 640),
+                "batch": args.get("batch", -1),
+                "fraction": args.get("fraction", 1.0),
+            },
+            "params",
+        )
+    except param_schema.ValidationError as exc:
+        raise JobError(str(exc)) from exc
+
+    return {
+        "model": model,
+        "iterations": iterations,
+        "epochs": epochs,
+        "gpus": gpus,
+        "imgsz": int(params["imgsz"]),
+        "batch": int(params["batch"]),
+        "fraction": float(params["fraction"]),
+        # 이어하기가 기본이다. 몇 시간짜리 잡을 실수로 날리지 않게 한다.
+        "restart": flag("restart", "처음부터 다시"),
+    }
+
+
+def _argv_tune(
+    owner: Path, directory: Path, args: dict[str, Any], devices: list[int]
+) -> list[str]:
+    argv = [
+        "--dataset-dir", str(owner),
+        "--out-dir", str(directory),
+        "--events", str(directory / "events.jsonl"),
+        "--model", args["model"],
+        "--iterations", str(args["iterations"]),
+        "--epochs", str(args["epochs"]),
+        "--imgsz", str(args["imgsz"]),
+        "--batch", str(args["batch"]),
+        "--fraction", str(args["fraction"]),
+        "--device", ",".join(str(d) for d in devices) if devices else "cpu",
+    ]
+    if args["restart"]:
+        argv.append("--restart")
+    return argv
+
+
+register(
+    JobSpec(
+        kind="tune",
+        owner_type="dataset",
+        label="하이퍼파라미터 탐색",
+        script="tune_worker.py",
+        validate=_validate_tune,
+        needs_gpu=lambda args: args["gpus"] > 0,
+        build_argv=_argv_tune,
+        # 분석·품질 검사와 다르다. 탐색을 CPU 로 내리면 며칠이 걸려 의미가 없다 —
+        # 조용히 강등하는 것보다 "GPU 가 차 있다" 고 거절하는 편이 정직하다.
+        gpu_optional=False,
+        devices_wanted=lambda args: args["gpus"],
     )
 )
 

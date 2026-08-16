@@ -423,7 +423,9 @@ def start_job(
                 )
             # GPU 를 못 잡아도 되는 작업은 CPU 로 내려서 돌린다. 거절하는 것보다 낫고,
             # 무엇보다 학습이 쓰는 GPU 를 뺏지 않는다.
-            devices = free[:1]
+            # 몇 장을 잡을지는 스펙이 정한다(기본 1). 요청보다 여유가 적으면 있는 만큼만 잡는다 —
+            # 거절하면 두 장짜리 요청이 한 장 남은 기계에서 영영 시작되지 않는다.
+            devices = free[: max(spec.devices_wanted(clean), 1)]
         try:
             return jobs.spawn(kind, owner_type, owner_id, clean, devices)
         except sqlite3.IntegrityError as exc:

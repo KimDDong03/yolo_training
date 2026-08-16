@@ -91,7 +91,10 @@ class ReportTest(unittest.TestCase):
                 record(3, 0.560, lr0=0.004),
             ]
         )
-        report = tune.build_report(directory, {"iterations": 10})
+        # 처방까지 보려면 흔들림이 재져 있어야 한다 — 못 쟀으면 제안을 접는다.
+        report = tune.build_report(
+            directory, {"iterations": 10}, noise=noise_of(0.005, 0.500)
+        )
 
         self.assertEqual(report["iterations_done"], 3)
         self.assertEqual(report["iterations_target"], 10)
@@ -130,7 +133,9 @@ class ReportTest(unittest.TestCase):
     def test_gain_below_threshold_prescribes_nothing(self):
         gain = tune.MIN_ACTIONABLE_GAIN / 2
         report = tune.build_report(
-            written([record(1, 0.500), record(2, 0.500 + gain)]), {"iterations": 10}
+            written([record(1, 0.500), record(2, 0.500 + gain)]),
+            {"iterations": 10},
+            noise=noise_of(0.0, 0.500),
         )
         self.assertEqual(report["patch"], {})
         self.assertEqual(report["items"], [])
@@ -245,12 +250,26 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(report["threshold"], tune.MIN_ACTIONABLE_GAIN)
         self.assertEqual(report["patch"], {})
 
-    def test_without_noise_the_floor_is_used(self):
-        directory = written([record(1, 0.500), record(2, 0.560)])
+    def test_without_measured_noise_nothing_is_prescribed(self):
+        """흔들림을 못 쟀으면 상승폭이 커도 처방하지 않는다.
+
+        예전에는 바닥선(0.005)을 문턱으로 대신 썼다. 실측된 흔들림이 0.007~0.026 이라
+        그 값은 무엇이든 통과시킨다 — 판정이 아니라 판정하는 시늉이었다.
+        """
+        directory = written([record(1, 0.500), record(2, 0.560, lr0=0.004)])
         report = tune.build_report(directory, {"iterations": 10})
         self.assertIsNone(report["noise"])
-        self.assertEqual(report["threshold"], tune.MIN_ACTIONABLE_GAIN)
-        self.assertTrue(report["patch"])
+        self.assertAlmostEqual(report["gain"], 0.060, places=5)
+        self.assertEqual(report["patch"], {})
+        self.assertEqual(report["items"], [])
+        self.assertTrue(any("재지 못했습니다" in line for line in report["advisories"]))
+        # 재지 못했다는 사실은 감추지 않는다 — 숫자는 그대로 보여준다.
+        self.assertTrue(report["available"])
+
+    def test_a_made_up_threshold_is_never_used(self):
+        """노이즈가 없을 때 actionable_threshold 를 부르지 않는다."""
+        with self.assertRaises(TypeError):
+            tune.actionable_threshold(None, 4)  # type: ignore[arg-type]
 
     def test_report_carries_no_job_status(self):
         # 잡 상태의 단일 원천은 JobStatus 다. 리포트가 복제하면 강제 종료 뒤 서로를 부정한다.

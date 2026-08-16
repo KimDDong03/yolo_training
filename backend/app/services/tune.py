@@ -39,17 +39,22 @@ SPACE: dict[str, tuple[float, ...]] = {
     "mosaic": (0.0, 1.0),
 }
 
-# 처방의 **바닥선**이다. 이만큼도 못 올렸으면 무엇을 재든 처방하지 않는다.
+# **실용적 하한**이다. 통계적 문턱이 아니라 "이만큼도 못 올랐으면 값을 바꿀 가치가 없다" 는 선.
 #
 # 단위는 **mAP50-95** 다. ultralytics 8.4.47 의 검출 fitness 가중치는 [P,R,mAP50,mAP50-95] =
 # [0,0,0,1] 이라(utils/metrics.py:965) fitness 가 곧 mAP50-95 다. 예전 판의 0.1/0.9 가중합이
 # 아니므로 "fitness 0.02" 는 "mAP50-95 2%p" 로 그대로 읽으면 된다.
 #
-# **이 상수만으로 판정하지 않는다.** 실측(.codex/phase-4.md "시드 변동폭")에서 같은
+# **통계적 판정은 이 상수가 하지 않는다.** 실측(.codex/phase-4.md "시드 변동폭")에서 같은
 # 하이퍼파라미터도 시드만 바꾸면 크게 흔들렸다 — 에폭 3·데이터 15% 에서 표준편차 0.026,
 # 에폭 10·데이터 100% 에서 0.007. 3.5배 차이라 어떤 상수를 골라도 한쪽에서는 틀린다.
-# 그래서 실제 문턱은 **탐색이 자기 설정에서 직접 잰 노이즈**와 이 바닥선 중 큰 쪽이다
-# (아래 actionable_threshold).
+# 그래서 문턱은 **탐색이 자기 설정에서 직접 잰 노이즈**로 정하고(actionable_threshold),
+# 이 상수는 그 아래로 내려가지 않게 받치는 역할만 한다. 잰 흔들림이 0 으로 나와도
+# 0.0001 짜리 상승을 처방하지는 않는다는 뜻이다.
+#
+# **노이즈를 못 쟀을 때 이 값을 문턱으로 대신 쓰지 않는다.** 실측된 흔들림이 0.007~0.026 인데
+# 이 값은 그보다 낮아, 못 쟀을 때 꺼내 쓰면 무엇이든 통과시키면서 판정한 척만 하게 된다.
+# 그때는 처방하지 않고 못 쟀다고 말한다(build_report).
 MIN_ACTIONABLE_GAIN = 0.005
 
 # 확인 시도에 쓸 시드들. 시도는 전부 0 으로 도므로(job.log 로 확인) 겹치지 않으면 된다.
@@ -77,15 +82,15 @@ def selection_factor(trials: int) -> float:
     return math.sqrt(2.0 * math.log(max(trials, 2)))
 
 
-def actionable_threshold(spread: float | None, trials: int = 2) -> float:
+def actionable_threshold(spread: float, trials: int = 2) -> float:
     """이번 탐색에서 처방을 낼 최소 상승폭.
 
-    노이즈를 쟀으면 (표준편차 × 선택 보정)과 바닥선 중 큰 쪽을 쓴다. 같은 하이퍼파라미터를
-    시드만 바꿔 돌렸을 때 벌어지는 만큼은 하이퍼파라미터가 한 일이 아니고, 여러 번 뽑아
-    제일 좋은 것을 고른 몫도 하이퍼파라미터가 한 일이 아니다.
+    (잰 표준편차 × 선택 보정)과 실용적 하한 중 큰 쪽이다. 같은 하이퍼파라미터를 시드만
+    바꿔 돌렸을 때 벌어지는 만큼은 하이퍼파라미터가 한 일이 아니고, 여러 번 뽑아 제일
+    좋은 것을 고른 몫도 하이퍼파라미터가 한 일이 아니다.
+
+    **노이즈를 못 쟀을 때는 이 함수를 부르지 않는다.** 문턱을 지어내는 대신 처방을 접는다.
     """
-    if spread is None:
-        return MIN_ACTIONABLE_GAIN
     return max(MIN_ACTIONABLE_GAIN, float(spread) * selection_factor(trials))
 
 # 시도마다 붙는 고정 비용(초). 에폭 수와 무관하게 든다.
@@ -277,6 +282,8 @@ def build_report(
         "eta_s": None,
         # 이번 설정에서 직접 잰 시드 노이즈와, 그로부터 정해진 실제 문턱.
         # 문턱은 시도 수에 따라 달라지므로(선택 보정) 아래에서 다시 정한다.
+        # 노이즈를 못 재면 판정 자체를 하지 않으므로 이 값은 하한으로만 남는다 —
+        # 화면도 noise 가 있을 때만 문턱을 보여준다(TunePanel).
         "noise": noise,
         "threshold": MIN_ACTIONABLE_GAIN,
         "available": False,
@@ -330,19 +337,31 @@ def build_report(
         return report
 
     measured = (noise or {}).get("stdev")
+    if measured is None:
+        # 확인 시도가 못 돌아 이 설정의 흔들림을 모른다. 그러면 상승폭이 하이퍼파라미터
+        # 덕인지 시드 운인지 구분할 근거가 없다. 여기서 상수를 문턱으로 꺼내 쓰면 판정이
+        # 아니라 판정하는 시늉이다 — 실측 흔들림이 0.007~0.026 인데 바닥선은 그보다 낮아
+        # 무엇이든 통과시킨다. 근거 없는 처방을 내느니 못 쟀다고 말한다.
+        report["advisories"].append(
+            f"최고 조합이 기본값보다 +{gain:.4f} 높습니다. 다만 같은 값을 시드만 바꿔 다시 "
+            "돌리는 확인 시도가 실패해 이 설정에서 결과가 얼마나 흔들리는지를 재지 못했습니다. "
+            "흔들림을 모르면 이 상승이 하이퍼파라미터 덕인지 시드 운인지 구분할 수 없어 "
+            "제안하지 않습니다. 탐색을 다시 시작하면 확인 시도부터 이어서 잽니다."
+        )
+        return report
+
     threshold = actionable_threshold(measured, len(usable))
     report["threshold"] = round(threshold, 5)
-    if measured is not None:
-        count = len((noise or {}).get("fitness") or []) + 1
-        report["advisories"].append(
-            f"같은 값을 시드만 바꿔 {count}번 돌려 봤더니 결과가 ±{float(measured):.4f} 만큼"
-            f" 흔들렸습니다. 시도 {len(usable)}개 중 최고를 고른 몫까지 감안해"
-            f" +{threshold:.4f} 넘게 올라야 하이퍼파라미터 덕이라고 봅니다."
-        )
+    count = len((noise or {}).get("fitness") or []) + 1
+    report["advisories"].append(
+        f"같은 값을 시드만 바꿔 {count}번 돌려 봤더니 결과가 ±{float(measured):.4f} 만큼"
+        f" 흔들렸습니다. 시도 {len(usable)}개 중 최고를 고른 몫까지 감안해"
+        f" +{threshold:.4f} 넘게 올라야 하이퍼파라미터 덕이라고 봅니다."
+    )
 
     if gain < threshold:
-        if measured is not None and gain >= MIN_ACTIONABLE_GAIN:
-            # 바닥선은 넘었지만 이번 설정의 노이즈 안이다. 왜 안 되는지를 정확히 말한다 —
+        if gain >= MIN_ACTIONABLE_GAIN:
+            # 하한은 넘었지만 이번 설정의 노이즈 안이다. 왜 안 되는지를 정확히 말한다 —
             # 이 문장이 없으면 사용자는 "+0.02 나 올랐는데 왜 제안이 없나" 로 읽는다.
             report["advisories"].append(
                 f"최고 조합이 기본값보다 +{gain:.4f} 높지만 위 흔들림(±{float(measured):.4f})보다 "

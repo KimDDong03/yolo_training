@@ -42,6 +42,33 @@ def isolate_storage() -> Path:
     return root
 
 
+def isolate_weights(test, names: list[str]) -> Path:
+    """bundle/weights 를 임시 폴더로 돌리고 주어진 이름의 빈 .pt 를 만든다.
+
+    isolate_storage 는 이걸 하지 않는다 — 그래서 지금 테스트들은 이 PC 의 진짜
+    bundle/weights 를 읽는다. 모델을 고르는 코드를 검증하려면 그 폴더의 내용이
+    테스트가 정한 것이어야 한다.
+
+    param_schema 와 models 는 각자 import 시점에 WEIGHTS_DIR 을 자기 이름으로
+    묶어 두므로 **두 모듈 모두** 갈아끼워야 한다(isolate_storage 의 jobs.RUNS_DIR 과 같은 이유).
+
+    **jobs 와 run_manager 도 WEIGHTS_DIR 을 묶어 두지만 여기서는 건드리지 않는다.** 그쪽은
+    워커 subprocess 의 cwd 로 쓰므로, 워커를 띄우는 테스트를 새로 쓸 때는 그 둘도 함께
+    갈아끼워야 한다 — 안 그러면 조용히 진짜 bundle/weights 를 쓴다.
+    """
+    from app.services import models, param_schema
+
+    root = Path(tempfile.mkdtemp(prefix="yoloweb_weights_"))
+    for name in names:
+        (root / name).write_bytes(b"")
+
+    originals = [(param_schema, param_schema.WEIGHTS_DIR), (models, models.WEIGHTS_DIR)]
+    for module, old in originals:
+        setattr(module, "WEIGHTS_DIR", root)
+        test.addCleanup(setattr, module, "WEIGHTS_DIR", old)
+    return root
+
+
 def force_worker_alive(test, alive: bool = True) -> None:
     """procs.is_our_worker 를 잠시 바꾼다. 테스트가 끝나면 원래대로 돌린다.
 

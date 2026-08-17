@@ -11,7 +11,7 @@ import json
 import time
 import unittest
 
-from ._support import isolate_storage
+from ._support import isolate_storage, isolate_weights
 
 
 def dataset(
@@ -123,6 +123,26 @@ class RecommendTest(unittest.TestCase):
         result = self.recommend.recommend(dataset(tiny=0.62), self.form(imgsz=1280), [])
         self.assertNotIn("imgsz", result["patch"])
 
+    def test_small_dataset_turns_early_stopping_on_from_both_sides(self) -> None:
+        """규칙 문구가 조기 종료를 약속하므로 patch 에 실제로 들어 있어야 한다.
+
+        두 방향을 다 잡아야 한다 — 0 은 이 레포에서 '끄기' 고(빠른 테스트 프리셋),
+        ultralytics 기본값 100 은 최고점이 나온 뒤로도 100 에폭을 더 돈다.
+        한쪽만 잡으면 다른 쪽 사용자는 300 에폭을 그대로 다 돌면서 화면으로는
+        '조기 종료를 함께 켜므로 다 돌지 않는다' 는 말을 듣는다.
+        """
+        for current in (0, 100):
+            with self.subTest(patience=current):
+                result = self.recommend.recommend(
+                    dataset(train=100), self.form(patience=current), []
+                )
+                self.assertEqual(result["patch"].get("patience"), 50)
+
+    def test_early_stopping_left_alone_when_already_tight(self) -> None:
+        """이미 충분히 조여 둔 값을 굳이 50 으로 밀어 올리지 않는다."""
+        result = self.recommend.recommend(dataset(train=100), self.form(patience=20), [])
+        self.assertNotIn("patience", result["patch"])
+
     def test_imbalance_is_advice_not_a_patch(self) -> None:
         """클래스 불균형은 파라미터로 풀 수 없다. 값을 바꾸는 척하면 안 된다."""
         result = self.recommend.recommend(
@@ -213,6 +233,33 @@ class EstimateTest(unittest.TestCase):
         self.assertLess(low, result["total_time_s"])
         self.assertGreater(high, result["total_time_s"])
 
+    def test_every_scale_has_all_three_constants(self) -> None:
+        """세 표를 실측으로 갈아끼울 때 한 스케일을 빠뜨리면 KeyError 로 500 이 난다.
+
+        analytic_epoch_seconds 와 analytic_vram_gb 는 무보호 인덱싱이라 방어가 없다.
+        model_scale 이 뽑을 수 있는 문자 전체를 세 표가 다 덮어야 한다.
+        """
+        scales = set("nsmlx")
+        for name in ("MODEL_COST", "VRAM_PER_IMAGE_GB", "VRAM_BASE_GB"):
+            with self.subTest(table=name):
+                self.assertEqual(set(getattr(self.estimate, name)), scales)
+
+    def test_bigger_models_cost_more_time_and_memory(self) -> None:
+        """실측값으로 갈아끼울 때 오타로 순서가 뒤집히는 것을 잡는다.
+
+        값 자체는 실측이 바꾸므로 고정하지 않는다. 고정하는 것은 **순서**다 —
+        어떤 실측이 나오든 큰 모델이 작은 모델보다 싸질 수는 없다.
+        """
+        order = "nsmlx"
+        times = [
+            self.estimate.analytic_epoch_seconds(1000, 640, s, True) for s in order
+        ]
+        memory = [self.estimate.analytic_vram_gb(16, 640, s, True) for s in order]
+        for i in range(len(order) - 1):
+            with self.subTest(pair=order[i : i + 2]):
+                self.assertLess(times[i], times[i + 1])
+                self.assertLess(memory[i], memory[i + 1])
+
     def test_absurd_calibration_ratios_are_rejected(self) -> None:
         """표본이 지금 조건과 다른 영역에 있으면 배수가 폭발한다. 그걸 쓰면 안 된다."""
         from app.core import db
@@ -239,9 +286,37 @@ class EstimateTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        ratio, _, source = self.estimate._calibration("n", True)
+        ratio, _, source, _same_scale = self.estimate._calibration("n", True)
         self.assertEqual(source, "analytic")
         self.assertEqual(ratio, 1.0)
+
+
+class DefaultModelTest(unittest.TestCase):
+    """폼에 처음 채워지는 모델은 번들에 무엇이 더 있든 가장 작은 것이어야 한다.
+
+    추천·예측 테스트와 같은 파일에 둔 이유: 이 불변식이 깨지면 estimate 의 스케일 상수도
+    recommend 의 판단도 전부 다른 모델 기준이 된다. 지키는 것은 KNOWN_MODELS 의 **선언 순서**라,
+    누가 default_model 에 sorted() 를 끼워 넣으면 기본값이 yolo11m 으로 조용히 뒤집힌다 —
+    그 뒤로 모든 신규 사용자의 첫 학습이 4배 느려지는데 아무도 바꾼 줄 모른다.
+    """
+
+    def setUp(self) -> None:
+        isolate_storage()
+        from app.services import param_schema
+
+        self.param_schema = param_schema
+
+    def test_smallest_model_wins_even_when_bigger_ones_exist(self) -> None:
+        isolate_weights(self, ["yolo11m.pt", "yolo11n.pt", "yolo11s.pt", "yolo26n.pt"])
+        self.assertTrue(self.param_schema.default_model().endswith("yolo11n.pt"))
+
+    def test_falls_back_to_any_pt_when_none_are_known(self) -> None:
+        isolate_weights(self, ["custom.pt"])
+        self.assertTrue(self.param_schema.default_model().endswith("custom.pt"))
+
+    def test_falls_back_to_a_definition_when_the_folder_is_empty(self) -> None:
+        isolate_weights(self, [])
+        self.assertTrue(self.param_schema.default_model().endswith(".yaml"))
 
 
 if __name__ == "__main__":

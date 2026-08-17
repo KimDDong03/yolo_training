@@ -22,12 +22,65 @@ from typing import Any
 from app.core import db
 from app.services import gpu, run_manager
 
-# 모델 스케일별 상대 연산량. yolo11n 을 1.0 으로 둔 근사값이며, 절대 시간은 보정이 맡는다.
-MODEL_COST = {"n": 1.0, "s": 1.9, "m": 4.3, "l": 5.6, "x": 8.7}
-# imgsz 640 · batch 1 기준 이미지당 활성값 메모리(GB) 근사.
-VRAM_PER_IMAGE_GB = {"n": 0.09, "s": 0.16, "m": 0.32, "l": 0.44, "x": 0.66}
-# 가중치·옵티마이저 상태 등 배치와 무관한 상주분(GB).
-VRAM_BASE_GB = {"n": 0.7, "s": 1.1, "m": 1.9, "l": 2.6, "x": 3.6}
+# 모델 스케일별 상대 연산량. yolo11n 을 1.0 으로 둔 값이며, 절대 시간은 보정이 맡는다.
+#
+# n/s/m 은 실측이다 — brain-tumor 893장 · 3에폭 · imgsz 640 · **batch 16** 에서
+# 에폭 11.01 / 16.11 / 31.00초 (.codex/phase-6.md 블록 A2).
+# **batch 를 왜 16 으로 고정해서 쟀는가.** batch 4 에서는 GPU 가 놀아 연산량이 아니라
+# 오버헤드를 재게 되고(s 19.71초가 n 20.77초보다 빨랐다), batch 32 에서는 m 이 16.4GB 를
+# 요구해 호스트 메모리로 흘러 4.7배 느려진다. 셋이 다 VRAM 안에 들면서 GPU 를 채우는 지점이 16 이다.
+# **이 값은 원시 시간비가 아니다.** 재보면 m 의 에폭은 n 의 2.82배인데 여기 4.09 가 들어간다.
+# 아래 analytic_epoch_seconds 가 이 계수를 **비례항에만** 곱하고 FIXED_EPOCH_SECONDS 는
+# 그대로 두는데, 보정 배수는 그 합 전체에 곱해지기 때문이다. 그래서 다른 스케일로 외삽할 때
+# 맞으려면 그 구조를 풀어서 내야 한다 — 원시 비 2.82 를 그대로 넣으면 n 만 돌려 본 사용자가
+# yolo11m 을 골랐을 때 예측이 26% 낮게 나온다(실측으로 확인).
+#
+#     COST = (측정에폭 / n의보정배수 - FIXED_EPOCH_SECONDS) / (N × BASE_SECONDS_PER_IMAGE × AMP)
+#
+# 이 값은 893장 지점에서 맞춘 것이고, 고정항 때문에 유효 배수가 N 에 따라 조금 움직인다.
+MODEL_COST = {
+    "n": 1.0,
+    "s": 1.79,  # 실측 (raw 1.46)
+    "m": 4.09,  # 실측 (raw 2.82)
+    # l·x 는 이 PC 에 반입하지 않아 재지 못했다. 옛 값에 m 의 (실측/옛값) 비를 곱해 순서만
+    # 유지한 값이다. 시간이 FLOPs 에 비례하지 않으므로(s 는 FLOPs 3.3배인데 원시 시간은
+    # 1.46배) FLOPs 로 외삽하지 않았다.
+    "l": 5.32,
+    "x": 8.27,
+}
+# imgsz 640 기준 이미지당 활성값 메모리(GB). VRAM_BASE_GB 와 함께
+# mem = BASE + PER_IMAGE × batch × pixels × AMP_FACTOR 를 이룬다.
+#
+# n/s/m 은 실측이다 — batch 4·16·32 세 점의 최소자승(잔차 n 0.04 / s 0.46 / m 0.04 GB).
+# **옛 값은 3.3배까지 과소평가였다**(n 0.09 → 0.30). 그래서 vram_over 가 발화해야 할 곳에서
+# 발화하지 않았다 — 실제로 yolo11m·batch 32 는 옛 식으로 8.0GB "여유" 인데 실측 16.4GB 로
+# 12GB 카드를 넘겨 Windows 호스트 메모리 폴백에 걸렸다(터지지 않고 조용히 느려진다).
+VRAM_PER_IMAGE_GB = {
+    "n": 0.30,  # 실측
+    "s": 0.39,  # 실측
+    "m": 0.80,  # 실측
+    "l": 1.10,  # 미측정 — m 의 실측/옛값 비를 곱한 값
+    "x": 1.65,  # 미측정
+}
+# 가중치·옵티마이저 상태 등 배치와 무관한 상주분(GB). 위 최소자승의 절편이다.
+VRAM_BASE_GB = {
+    "n": 0.15,  # 실측
+    "s": 0.90,  # 실측
+    "m": 1.00,  # 실측
+    "l": 1.37,  # 미측정 — m 의 실측/옛값 비를 곱한 값
+    "x": 1.90,  # 미측정
+}
+# 위 세 표를 실측으로 채운 모델. estimate() 가 가정 목록에 "이건 재본 적이 없다" 를
+# 덧붙이는 데 쓴다 — 값을 못 믿을 자리에서 사용자가 그걸 알아야 한다.
+#
+# 스케일 글자만 보면 안 된다. 번들에 실제로 들어 있는 yolo26n.pt 도, 드롭다운이 띄우는
+# yolov8m.pt 도 글자로는 n·m 이라 "쟀다" 로 통과해 버린다. 잰 것은 yolo11 계열 셋뿐이다.
+MEASURED_MODELS = {"yolo11n", "yolo11s", "yolo11m"}
+
+
+def is_measured(model_ref: str) -> bool:
+    """이 모델의 연산량·VRAM 상수를 이 PC 에서 실제로 재본 적이 있는가."""
+    return Path(str(model_ref or "")).stem.lower() in MEASURED_MODELS
 
 # 보정이 없을 때 쓰는 기준값: yolo11n · imgsz 640 · GPU 에서 이미지 한 장당 초.
 BASE_SECONDS_PER_IMAGE = 0.004
@@ -43,8 +96,16 @@ CPU_SLOWDOWN = 25.0
 RATIO_BOUNDS = (0.2, 5.0)
 # AMP 를 켜면 대략 이만큼으로 줄어든다 (시간·메모리 공통).
 AMP_FACTOR = 0.6
-# ultralytics AutoBatch 가 목표로 하는 VRAM 점유율.
-AUTOBATCH_TARGET = 0.6
+# AutoBatch 가 실제로 고르는 배치를 이 표들의 단위로 되짚기 위한 점유율.
+#
+# ultralytics 자체 값은 0.6 이지만 **그건 우리 단위가 아니다.** 그쪽은 시험 배치를 돌려
+# CUDA **allocated** 메모리를 프로파일링하는데, 위 VRAM 상수는 `max_memory_reserved`
+# (할당자 캐시를 포함해 더 크다)로 쟀다. 0.6 을 그대로 쓰면 배치를 두 배로 예측한다.
+#
+# 실측 2점으로 맞췄다 — brain-tumor 893장에서 AutoBatch 가 imgsz 640 에 20, imgsz 800 에
+# 13 을 골랐고(.codex/phase-6.md 블록 F 의 start 이벤트), 0.6 기준 예측은 39 와 25 였다.
+# 두 지점의 비가 0.513 과 0.520 으로 일치해서 0.6 × 0.515 를 쓴다.
+AUTOBATCH_TARGET = 0.31
 # 폼이 받는 배치 상한 (param_schema 의 batch max 와 같아야 한다).
 MAX_BATCH = 1024
 
@@ -176,12 +237,21 @@ def _calibration_samples() -> list[dict[str, Any]]:
     return samples
 
 
-def _calibration(scale: str, on_gpu: bool) -> tuple[float, int, str]:
-    """(배수, 표본수, 출처). 쓸 만한 표본이 없으면 (1.0, 0, "analytic")."""
+def _calibration(scale: str, on_gpu: bool) -> tuple[float, int, str, bool]:
+    """(배수, 표본수, 출처, 같은_스케일_표본인가).
+
+    쓸 만한 표본이 없으면 (1.0, 0, "analytic", False).
+
+    마지막 값이 필요한 이유: 같은 스케일 표본이 없으면 다른 크기 모델의 배수를 빌려 쓰는데,
+    그건 스케일 차이를 MODEL_COST 가 완전히 흡수한다는 전제 위에 있다. 그 전제가 정확하지
+    않다는 것을 실측이 보여줬으므로(배수가 n 3.02 / s 3.48 / m 4.11) 사용자에게 밝혀야 한다.
+    """
     samples = _calibration_samples()
-    for pool in (
-        [s for s in samples if s["scale"] == scale and s["on_gpu"] == on_gpu],
-        [s for s in samples if s["on_gpu"] == on_gpu],
+    for index, pool in enumerate(
+        (
+            [s for s in samples if s["scale"] == scale and s["on_gpu"] == on_gpu],
+            [s for s in samples if s["on_gpu"] == on_gpu],
+        )
     ):
         if not pool:
             continue
@@ -189,8 +259,8 @@ def _calibration(scale: str, on_gpu: bool) -> tuple[float, int, str]:
         # 배수가 이 범위를 벗어나면 모델이 표본의 조건을 설명하지 못한다는 뜻이다.
         # 그런 배수를 다른 조건에 곱하면 엉뚱한 값이 나오므로 차라리 보정을 포기한다.
         if RATIO_BOUNDS[0] <= ratio <= RATIO_BOUNDS[1]:
-            return ratio, len(pool), "calibrated"
-    return 1.0, 0, "analytic"
+            return ratio, len(pool), "calibrated", index == 0
+    return 1.0, 0, "analytic", False
 
 
 def _total_vram_gb(devices: list[int]) -> float | None:
@@ -246,19 +316,33 @@ def estimate(
             f"배치가 자동(-1)이라 {batch} 로 가정했습니다. 실제 값은 학습 시작 시 정해집니다."
         )
 
-    ratio, samples, source = _calibration(scale, on_gpu)
+    ratio, samples, source, same_scale = _calibration(scale, on_gpu)
     epoch_seconds = analytic_epoch_seconds(images, imgsz, scale, amp, on_gpu) * ratio
     total_seconds = epoch_seconds * max(epochs, 1)
     vram = round(analytic_vram_gb(batch, imgsz, scale, amp), 2) if on_gpu else None
 
     device_label = f"GPU {devices[0]}" if on_gpu else "CPU"
+    # 모델 이름은 실제 파일에서 읽는다. f"yolo11{scale}" 로 만들면 yolov8m.pt 를 고른
+    # 사용자에게 "yolo11m" 이라고 적힌 가정을 보여주게 된다.
+    model_label = Path(str(params.get("model", ""))).stem or f"yolo11{scale}"
     assumptions.insert(
         0,
-        f"yolo11{scale} · 이미지 {images}장 · imgsz {imgsz} · 배치 {batch} · {device_label}",
+        f"{model_label} · 이미지 {images}장 · imgsz {imgsz} · 배치 {batch} · {device_label}",
     )
+    if not is_measured(params.get("model", "")):
+        assumptions.append(
+            f"{model_label} 은 이 PC 에서 상수를 재본 적이 없는 모델이라 "
+            f"연산량·VRAM 비율이 추정값입니다. 시간과 VRAM 모두 빗나갈 수 있습니다."
+        )
     if source == "calibrated":
         assumptions.append(
             f"이 PC 에서 완료된 학습 {samples}개의 실측 시간으로 보정했습니다."
+            if same_scale
+            # 다른 크기 모델의 표본으로 보정했다는 것을 밝힌다. 이 폴백은 스케일 차이를
+            # MODEL_COST 가 완전히 흡수한다고 전제하는데, 실측에서 보정 배수가 스케일마다
+            # 달랐다(n 3.02 / s 3.48 / m 4.11). 밝히지 않으면 빗나갔을 때 이유를 알 수 없다.
+            else f"이 PC 에는 같은 크기 모델의 기록이 없어 다른 크기 학습 "
+            f"{samples}개로 보정했습니다. 그만큼 오차가 큽니다."
         )
         spread = (0.7, 1.4)
     else:

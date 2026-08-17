@@ -21,8 +21,13 @@ WEIGHTS_DIR = BASE_DIR / "bundle" / "weights"
 RELEASE = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
 
 # (파일명, 최소 크기) — 다운로드가 중간에 끊겨 생긴 조각 파일을 걸러내려고 크기를 본다.
+# 하한은 실제 크기의 약 75% 로 잡는다(n 은 5.6MB 에 하한 4MB).
 WEIGHTS = [
     ("yolo11n.pt", 4 * 1024 * 1024),
+    # s·m 은 "더 큰 모델을 쓰라" 는 처방을 실제로 따를 수 있게 하려고 함께 받는다.
+    # 이게 없으면 next_actions 의 조언도 estimate 의 스케일 상수도 검증할 길이 없다.
+    ("yolo11s.pt", 15 * 1024 * 1024),
+    ("yolo11m.pt", 30 * 1024 * 1024),
     ("yolo26n.pt", 4 * 1024 * 1024),  # ultralytics AMP 체크가 이 파일을 요구한다
 ]
 
@@ -43,7 +48,9 @@ def main() -> int:
     for name, min_size in WEIGHTS:
         dest = WEIGHTS_DIR / name
         if dest.exists() and dest.stat().st_size >= min_size:
-            print(f"[건너뜀] {name} — 이미 있음 ({dest.stat().st_size / 1024**2:.1f} MB)")
+            print(
+                f"[건너뜀] {name} — 이미 있음 ({dest.stat().st_size / 1024**2:.1f} MB)"
+            )
             continue
         try:
             download(name, dest)

@@ -56,7 +56,8 @@ export function PreviewPanel({ runId, run, events, dataset }: Props) {
           ) : (
             <EmptyState title="실행 정보를 불러오는 중입니다." />
           ))}
-        {tab === 'infer' && <InferenceTest runId={runId} />}
+        {/* key 로 run 마다 새로 만든다 — conf·결과·가중치 선택이 다음 run 으로 넘어가면 안 된다. */}
+        {tab === 'infer' && <InferenceTest key={runId} runId={runId} />}
         {tab === 'dataset' && (
           <>
             <DatasetReviewPanel dataset={dataset} />
@@ -356,7 +357,9 @@ function InferenceTest({ runId }: { runId: string }) {
    */
   const [conf, setConf] = useState(0.25)
   const [confAdvice, setConfAdvice] = useState<{ conf: number; f1: number | null } | null>(null)
-  const [confTouched, setConfTouched] = useState(false)
+  // state 가 아니라 ref 다 — 아래 effect 는 mount 때 한 번 만들어져서 state 를 읽으면
+  // 그 시점의 false 를 영원히 본다. 응답이 오는 사이에 사용자가 만진 것을 놓친다.
+  const confTouched = useRef(false)
   const [iou, setIou] = useState(0.7)
   const [imgsz, setImgsz] = useState(640)
   const [result, setResult] = useState<PredictResult | null>(null)
@@ -385,7 +388,7 @@ function InferenceTest({ runId }: { runId: string }) {
         if (cancelled || !c?.reliable || c.conf == null) return
         setConfAdvice({ conf: c.conf, f1: c.f1 })
         // 사용자가 이미 슬라이더를 만졌으면 덮어쓰지 않는다.
-        setConf((v) => (confTouched ? v : c.conf!))
+        setConf((v) => (confTouched.current ? v : c.conf!))
       })
       .catch(() => {})
     return () => {
@@ -436,7 +439,7 @@ function InferenceTest({ runId }: { runId: string }) {
               max={0.95}
               step={0.01}
               onChange={(v) => {
-                setConfTouched(true)
+                confTouched.current = true
                 setConf(v)
               }}
             />

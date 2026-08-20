@@ -61,7 +61,9 @@ def _scan(path: Path) -> dict[str, Any]:
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if obj.get("t") != "epoch":
+                # 문법이 맞아도 객체가 아닐 수 있다("epoch" 같은 문자열 한 줄). dict 가 아니면
+                # .get 이 AttributeError 로 터지고 그 예외가 목록 응답 전체를 500 으로 만든다.
+                if not isinstance(obj, dict) or obj.get("t") != "epoch":
                     continue
                 value = obj.get("epoch")
                 if isinstance(value, int):
@@ -69,7 +71,8 @@ def _scan(path: Path) -> dict[str, Any]:
                 value = obj.get("total_epochs")
                 if isinstance(value, int):
                     total = value
-                value = (obj.get("summary") or {}).get("mAP50-95")
+                summary = obj.get("summary")
+                value = summary.get("mAP50-95") if isinstance(summary, dict) else None
                 if isinstance(value, (int, float)) and (best is None or value > best):
                     best = float(value)
     except OSError:

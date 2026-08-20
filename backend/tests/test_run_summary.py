@@ -74,6 +74,21 @@ class SummarizeTest(unittest.TestCase):
             {"epoch": 1, "total_epochs": 9, "best_map": 0.5},
         )
 
+    def test_valid_json_that_is_not_an_object_is_skipped(self) -> None:
+        """문법은 맞지만 객체가 아닌 줄. 예전에는 .get 이 터져 목록 전체가 500 이 됐다."""
+        run_dir = self.root / "r5"
+        run_dir.mkdir(parents=True)
+        lines = [
+            '"epoch"',
+            "[1, 2, 3]",
+            '{"t": "epoch", "epoch": 2, "total_epochs": 4, "summary": "epoch"}',
+            '{"t": "epoch", "epoch": 3, "total_epochs": 4, "summary": {"mAP50-95": 0.7}}',
+        ]
+        (run_dir / "events.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self.assertEqual(
+            run_summary.summarize(run_dir),
+            {"epoch": 3, "total_epochs": 4, "best_map": 0.7},
+        )
     def test_returns_copy_so_caller_cannot_poison_cache(self) -> None:
         run_dir = self.root / "r4"
         write_events(run_dir, [epoch(7, 10, 0.2)])

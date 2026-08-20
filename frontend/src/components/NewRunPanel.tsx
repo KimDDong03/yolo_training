@@ -172,6 +172,17 @@ export function NewRunPanel({
 
   const goalTimes = useGoalTimes(dataset, devices, values, goalPatch, schema)
 
+  /*
+   * 추천은 늦게 온다. 그 전에 균형을 고르면 카드에는 추천 imgsz 가 뜨는데 폼에는 기본값이
+   * 남아, 고른 카드와 실제 설정이 어긋난다. 추천이 확정되면 고른 카드를 다시 적용한다.
+   * patch 가 그대로면 setValues 가 같은 값을 쓰므로 반복되지 않는다.
+   */
+  useEffect(() => {
+    if (!goal) return
+    const patch = goalPatch[goal]
+    setValues((v) => (Object.entries(patch).every(([k, x]) => v[k] === x) ? v : { ...v, ...patch }))
+  }, [goal, goalPatch])
+
   /**
    * 값을 바꾸는 유일한 경로.
    *
@@ -706,6 +717,9 @@ export function NewRunPanel({
  * 값이 아니라 알려만 주는 advisory 는 여기 넣지 않는다 — 그건 전문 모드의 표가 맡는다.
  */
 function Advice({ rec }: { rec: { items: { reason: string; effect: string }[] } | null }) {
+  // 정본은 이 문장의 숫자를 강조하지만, 문장이 서버에서 통째로 오므로 숫자를 골라내려면
+  // 한국어 문장을 파싱해야 한다. 엉뚱한 숫자를 칠할 위험이 있어 하지 않는다 —
+  // 검수와 카드를 잇는 강조는 목표 카드 쪽 .from-review 가 맡는다.
   const first = rec?.items?.[0]
   if (!first) return null
   return (
@@ -731,7 +745,22 @@ function useGoalTimes(
 ): Record<GoalKey, number | null> {
   const [times, setTimes] = useState<Record<GoalKey, number | null>>({ quick: null, balanced: null, best: null })
 
-  const signature = JSON.stringify([dataset?.id, devices, values['model'], goalPatch])
+  /*
+   * goalPatch 가 덮어쓰지 않는 값 가운데 estimate 에 실제로 영향을 주는 것만 넣는다
+   * (epochs·imgsz·batch 는 카드가 덮으므로 goalPatch 에 이미 들어 있다).
+   * 이걸 빼면 전문 모드에서 amp 를 꺼도 카드의 예상 시간이 이전 값으로 남는다.
+   */
+  const signature = JSON.stringify([
+    dataset?.id,
+    devices,
+    goalPatch,
+    values['model'],
+    values['amp'],
+    values['patience'],
+    values['mixup'],
+    values['cache'],
+    values['close_mosaic'],
+  ])
 
   useEffect(() => {
     if (!dataset || !schema) return

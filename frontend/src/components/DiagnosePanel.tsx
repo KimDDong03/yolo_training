@@ -37,7 +37,7 @@ function toOverlay(boxes: AnalysisBox[], kind: 'gt' | 'pred'): OverlayBox[] {
     return {
       box: b.box,
       label: `${wrong ? '오검출' : '검출'}: ${b.name} ${b.conf ?? ''}`,
-      kind: wrong ? 'false' : 'hit',
+      kind: wrong ? 'false-positive' : 'hit',
     }
   })
 }

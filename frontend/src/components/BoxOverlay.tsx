@@ -11,13 +11,13 @@ import type { CSSProperties, ReactNode } from 'react'
  * 예전에는 호출부가 색 문자열을 직접 넘겼다. 그래서 같은 "맞은 검출" 이 화면마다 다른 색이
  * 될 수 있었고, 규칙을 바꾸려면 호출부를 전부 찾아다녀야 했다.
  */
-export type BoxKind = 'gt' | 'missed' | 'hit' | 'false' | 'evidence'
+export type BoxKind = 'gt' | 'missed' | 'hit' | 'false-positive' | 'evidence'
 
 const STYLES: Record<BoxKind, { color: string; dashed: boolean; emphasis: boolean }> = {
   gt: { color: '#7fc7a0', dashed: false, emphasis: false }, // 정답
   missed: { color: '#c9a96a', dashed: false, emphasis: true }, // 놓친 정답 — 먼저 눈에 띄어야 한다
   hit: { color: '#8fa9e8', dashed: false, emphasis: false }, // 맞은 검출
-  false: { color: '#e27c64', dashed: true, emphasis: false }, // 오검출
+  'false-positive': { color: '#e27c64', dashed: true, emphasis: false }, // 오검출
   evidence: { color: '#98968f', dashed: true, emphasis: false }, // 근거 박스
 }
 

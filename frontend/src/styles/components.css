@@ -107,7 +107,8 @@
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-.run-meta .err { color: var(--err); }
+/* 같은 요소에 두 클래스가 붙는다(class="run-meta err"). 자손 셀렉터로 쓰면 안 맞는다. */
+.run-meta.err { color: var(--err); }
 
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: var(--r-full); flex-shrink: 0; background: var(--muted); }
 .dot.running { background: var(--accent); }
@@ -152,7 +153,8 @@
 .card > h3,
 .card-head > h3 {
   margin: 0 0 var(--sp-4);
-  font-size: 13px;
+  font-size: var(--fs-lg);
+  letter-spacing: -0.015em;
   color: var(--muted);
   font-weight: 600;
 }
@@ -414,20 +416,6 @@ fieldset.group > legend { padding: 0; }
 .group-toggle .chevron { transition: transform 0.15s; }
 .group-toggle[aria-expanded='false'] .chevron { transform: rotate(-90deg); }
 
-/* 학습 시작처럼 항상 닿아야 하는 액션 */
-.sticky-foot {
-  position: sticky;
-  bottom: calc(var(--sp-5) * -1);
-  z-index: var(--z-sticky);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  margin: var(--sp-5) calc(var(--sp-5) * -1) calc(var(--sp-5) * -1);
-  padding: var(--sp-4) var(--sp-5);
-  background: var(--panel);
-  border-top: 1px solid var(--line);
-}
-
 /* ── 새 학습 ──────────────────────────────────────────── */
 /*
  * 이 화면은 세 가지만 묻는다 — 무엇으로 / 어디까지 / 어디서. 파라미터 46개는 그 뒤에 접혀 있다.
@@ -450,7 +438,6 @@ fieldset.group > legend { padding: 0; }
 /* 검수 결과를 결정 지점에 붙인다 — 이 문장 때문에 아래 목표 카드의 imgsz 가 달라진다. */
 .advice { background: var(--panel-2); border-radius: var(--r-row); padding: 15px 17px; margin-top: var(--sp-4); font-size: var(--fs-base); line-height: 1.65; }
 .advice strong { color: var(--text); font-weight: 600; }
-.advice .num { font-family: var(--mono); color: var(--accent); }
 
 .goal-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
 .goal {

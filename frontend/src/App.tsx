@@ -99,6 +99,12 @@ export default function App() {
     runs.reload()
   }
 
+  /*
+   * 상세는 run 을 옮긴 직후 한 박자 늦게 도착한다. 그동안 옛 detail 을 그대로 내려주면
+   * 새 run 의 이름 아래에 이전 run 의 데이터셋 이름이 붙는다. id 가 맞을 때만 쓴다.
+   */
+  const detailFor = (id: string | null) => (detail && detail.id === id ? detail : null)
+
   const offline = runs.failures >= OFFLINE_AFTER
 
   return (
@@ -146,7 +152,7 @@ export default function App() {
 
         <main className="main">
           {view.kind === 'run' && current && (
-            <RunHeader run={current} dataset={detail?.dataset} stream={stream} onStop={stop} />
+            <RunHeader run={current} dataset={detailFor(runId)?.dataset} stream={stream} onStop={stop} />
           )}
           {view.kind === 'run' && current?.status === 'failed' && (
             <FailureCard
@@ -183,7 +189,7 @@ export default function App() {
                   runId={runId}
                   run={current}
                   events={stream.events}
-                  dataset={detail?.dataset}
+                  dataset={detailFor(runId)?.dataset}
                 />
               }
               right={

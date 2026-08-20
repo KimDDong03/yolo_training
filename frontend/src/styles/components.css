@@ -42,6 +42,8 @@
 .sidebar-scroll { flex: 1; overflow: auto; padding: 0 var(--sp-2) var(--sp-3); }
 .sidebar-scroll ul { list-style: none; margin: 0; padding: 0; }
 .sidebar-foot { border-top: 1px solid var(--line); padding: var(--sp-3) var(--sp-2); display: flex; flex-direction: column; gap: 2px; }
+/* 아이콘은 아이콘 레일에서만 쓴다. 넓을 때는 라벨이 이름을 말하므로 필요 없다. */
+.nav-icon { display: none; width: 13px; height: 13px; flex-shrink: 0; }
 
 /* 구획 라벨. 목록을 "지금 도는 것" 과 "지나간 것" 으로 가르는 것이 이 화면의 요점이다. */
 .sidebar-section {
@@ -632,13 +634,40 @@ fieldset.group > .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 
    * 밀면 폭이 바뀔 때마다 아래 그리드가 전부 다시 계산돼 화면이 출렁인다.
    */
   .sidebar { width: 60px; overflow: visible; }
-  .sidebar:hover, .sidebar:focus-within { width: 276px; position: relative; z-index: var(--z-sticky); box-shadow: var(--shadow-1); }
+  /*
+   * 음수 마진이 요점이다 — 폭은 276 으로 벌리되 레이아웃에는 60 으로 남는다. 그래서 본문이
+   * 제자리에 있고 펼친 사이드바가 그 위를 덮는다. 마진 없이 폭만 키우면 포인터가 왼쪽 끝에
+   * 스칠 때마다 본문이 216px 씩 밀리고, 그때마다 아래 그리드가 전부 다시 계산된다.
+   */
+  .sidebar:hover, .sidebar:focus-within {
+    width: 276px;
+    margin-right: -216px;
+    position: relative;
+    z-index: var(--z-sticky);
+    box-shadow: var(--shadow-1);
+  }
+  /*
+   * 레일에 남기는 것은 넷뿐이다 — 새 학습 / 진행 중인 학습 / 데이터셋 / 비교.
+   *
+   * 지난 실행은 통째로 감춘다. 60px 안에서는 이름이 안 들어가 상태 점만 줄줄이 남는데,
+   * 점 열두 개가 세로로 늘어선 것은 아무 정보도 주지 않는다. 호버하면 다 나온다.
+   * 진행 중만은 남긴다 — 무엇이 돌고 있는지는 호버해야 알면 안 되는 정보다.
+   */
   .sidebar:not(:hover):not(:focus-within) .sidebar-search,
+  .sidebar:not(:hover):not(:focus-within) .sidebar-group.past,
   .sidebar:not(:hover):not(:focus-within) .sidebar-section,
   .sidebar:not(:hover):not(:focus-within) .run-meta,
   .sidebar:not(:hover):not(:focus-within) .run-item > button:last-child,
-  .sidebar:not(:hover):not(:focus-within) .nav-item > span:last-child { display: none; }
-  .sidebar:not(:hover):not(:focus-within) .run-name { display: none; }
+  .sidebar:not(:hover):not(:focus-within) .run-name,
+  .sidebar:not(:hover):not(:focus-within) .sidebar-foot .row,
+  .sidebar:not(:hover):not(:focus-within) .nav-label,
+  .sidebar:not(:hover):not(:focus-within) .nav-count { display: none; }
+  /* 라벨을 감춘 자리에 아이콘이 들어온다. 글자를 그냥 두면 60px 안에서 한 글자씩 접힌다. */
+  .sidebar:not(:hover):not(:focus-within) .nav-icon { display: block; }
+  .sidebar:not(:hover):not(:focus-within) .nav-item { justify-content: center; padding: var(--sp-2) 0; }
+  /* 진행 중 한 줄은 점만 남는다. 도는 것이 있다는 사실 자체가 신호다. */
+  .sidebar:not(:hover):not(:focus-within) .run-item.live { justify-content: center; }
+  .sidebar:not(:hover):not(:focus-within) .run-item.live .progress { display: block; margin-top: 0; }
   .sidebar:not(:hover):not(:focus-within) .sidebar-head { padding: var(--sp-2); }
   .sidebar:not(:hover):not(:focus-within) .sidebar-new { font-size: 0; padding: 0; }
   .sidebar:not(:hover):not(:focus-within) .sidebar-new::before { content: '＋'; font-size: var(--fs-xl); }

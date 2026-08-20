@@ -204,15 +204,20 @@ export function Sidebar({
           />
         )}
 
+        {/*
+          두 구획을 wrapper 로 감싼다. 아이콘 레일(1120 미만)에서 지난 실행만 통째로 감추려면
+          CSS 가 둘을 구분할 수 있어야 한다. 진행 중은 레일에서도 남는다 — 무엇이 돌고 있는지는
+          사이드바를 다시 짠 이유 그 자체라, 호버해야 보이면 안 된다.
+        */}
         {live.length > 0 && (
-          <>
+          <div className="sidebar-group live">
             <div className="sidebar-section">진행 중 · {live.length}</div>
             <ul>{live.map(row)}</ul>
-          </>
+          </div>
         )}
 
         {past.length > 0 && (
-          <>
+          <div className="sidebar-group past">
             <div className="sidebar-section">
               <span>지난 실행 · {past.length}</span>
               <label className="sr-only" htmlFor="run-sort">
@@ -229,7 +234,7 @@ export function Sidebar({
               </select>
             </div>
             <ul>{past.map(row)}</ul>
-          </>
+          </div>
         )}
       </div>
 
@@ -244,19 +249,32 @@ export function Sidebar({
             </button>
           </div>
         )}
+        {/*
+          아이콘 레일(1120 미만)에서는 라벨을 감추고 아이콘만 남긴다. 글자를 그대로 두면
+          60px 안에서 "데 이 터 셋" 으로 한 글자씩 접힌다. 라벨을 span 으로 감싼 이유가 이것이다.
+        */}
         <button
           className="nav-item"
           aria-current={view.kind === 'datasets' ? 'page' : undefined}
           onClick={() => onNavigate({ kind: 'datasets' })}
         >
-          데이터셋 <span className="muted tiny spacer">{datasetCount}</span>
+          <svg className="nav-icon" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+            <rect x="1" y="2" width="11" height="3" rx="1" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="1" y="8" width="11" height="3" rx="1" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+          <span className="nav-label">데이터셋</span>
+          <span className="muted tiny spacer nav-count">{datasetCount}</span>
         </button>
         <button
           className="nav-item"
           aria-current={view.kind === 'compare' ? 'page' : undefined}
           onClick={() => onNavigate({ kind: 'compare' })}
         >
-          실행 비교 <span className="muted tiny spacer">{compare.length}</span>
+          <svg className="nav-icon" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+            <path d="M3 11V4M6.5 11V1.5M10 11V7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+          <span className="nav-label">실행 비교</span>
+          <span className="muted tiny spacer nav-count">{compare.length}</span>
         </button>
       </div>
     </nav>

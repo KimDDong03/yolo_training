@@ -3,62 +3,72 @@
  *
  * 다크 전용이다 — 라이트 모드를 지원하지 않으므로 테마 전환용 셀렉터를 두지 않는다.
  * 글자색은 모두 --panel 배경 기준 WCAG AA(4.5:1) 를 넘도록 골랐다. 아래 주석의 비율이 근거다.
+ *
+ * 값의 정본은 design_handoff_yolo_console/README.md 의 "Design Tokens" 와
+ * 개선안 v2.dc.html 의 "토큰 시트 v2" 프레임이다. theme.ts 가 같은 값을 TS 상수로 한 벌 더 든다
+ * (recharts 가 SVG attribute 라 CSS 변수를 못 읽는다). 한쪽만 고치지 마라.
  */
 :root {
-  /* 표면 */
-  --bg: #0f1115;
-  --panel: #171a21;
-  --panel-2: #1d212a;
-  --panel-3: #242936; /* 호버·선택 */
-  --line: #2a2f3a;
-  --line-strong: #3a4150;
+  /* 표면 — 예전 팔레트는 파란기(hue 220)가 돌았다. 무채색에 가깝게, 한 단계씩 밝게 옮겼다. */
+  --bg: #1a1b1e;
+  --panel: #212328;
+  --panel-2: #2c2e35; /* 호버·선택·안쪽 블록 */
+  --panel-3: #34373e;
+  --line: #34373e;
+  --line-strong: #43464e;
 
   /* 글자 — 괄호 안은 --panel 위 대비 */
-  --text: #e6e8ee; /* 14.5:1 */
-  --muted: #949cad; /* 6.3:1 */
-  --muted-2: #828c9f; /* 5.1:1 — 도움말처럼 한 단계 더 약한 글자. 이보다 어둡게 두지 않는다. */
+  --text: #f5f3ee; /* 15.1:1 */
+  --muted: #a6a49e; /* 6.31:1 */
+  --muted-2: #98968f; /* 5.31:1 — 도움말처럼 한 단계 더 약한 글자. 이보다 어둡게 두지 않는다. */
 
   /* 의미 */
-  --accent: #4f8cff; /* 5.4:1 */
-  --accent-weak: rgba(79, 140, 255, 0.14);
-  --ok: #35c46b; /* 7.7:1 */
-  --warn: #e2b23c; /* 8.8:1 */
-  --err: #e2564a; /* 4.7:1 */
-  --err-weak: rgba(226, 86, 74, 0.12);
+  --accent: #e8c87c; /* 9.72:1 */
+  --accent-weak: rgba(232, 200, 124, 0.12);
+  --ok: #7fc7a0; /* 7.53:1 */
+  --warn: #c9a96a; /* 6.84:1 — 액센트와 같은 계열이라 한 단계 어둡게 분리했다 */
+  --err: #e27c64; /* 5.47:1 */
+  --err-weak: rgba(226, 124, 100, 0.12);
 
-  /* 간격 */
-  --sp-1: 4px;
-  --sp-2: 6px;
-  --sp-3: 8px;
-  --sp-4: 12px;
-  --sp-5: 16px;
-  --sp-6: 24px;
+  /* 간격 — 예전 4/6/8 은 너무 촘촘했다. 카드 안쪽 20~22, 카드 사이 16, 섹션 사이 38 이 기준이다. */
+  --sp-1: 6px;
+  --sp-2: 9px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 22px;
+  --sp-6: 32px;
+  --sp-7: 44px;
 
   /* 타이포 */
-  --fs-xs: 11px;
-  --fs-sm: 12px;
-  --fs-md: 14px;
-  --fs-lg: 16px;
+  --fs-xs: 10px;
+  --fs-sm: 11px;
+  --fs-md: 12px;
+  --fs-base: 13px;
+  --fs-lg: 14px;
+  --fs-xl: 17px;
+  --fs-2xl: 22px;
+  --fs-3xl: 30px;
 
-  /* 모서리 */
-  --r-sm: 4px;
-  --r-md: 6px;
-  --r-lg: 8px;
+  /* 모서리 — 이름이 곧 용도다. 치수가 아니라 용도로 고르라고 이렇게 지었다. */
+  --r-chip: 8px;
+  --r-input: 9px;
+  --r-row: 11px;
+  --r-card: 13px;
   --r-full: 999px;
 
   /* 그림자 */
-  --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-2: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-1: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 18px 48px rgba(0, 0, 0, 0.55);
 
   /* 겹침 순서 */
   --z-sticky: 10;
   --z-dialog: 50;
   --z-toast: 60;
 
-  /* 포커스 링 — 굵기를 한 곳에서 정한다 */
-  --focus-ring: 0 0 0 2px var(--accent);
+  /* 포커스 링 — 굵기를 한 곳에서 정한다. 배경색 위에 한 겹 깔아 어느 색 위에서도 링이 보인다. */
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(232, 200, 124, 0.55);
 
-  /* 단독망 전제: 웹폰트를 불러오지 않고 시스템 폰트만 쓴다. */
-  --mono: 'Cascadia Mono', Consolas, 'D2Coding', monospace;
-  font-family: 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
+  /* 폰트는 styles/fonts.css 가 로컬 파일로 등록한다. 없으면 시스템 폰트로 떨어진다. */
+  --mono: 'Geist Mono', 'Cascadia Mono', Consolas, 'D2Coding', monospace;
+  font-family: 'Pretendard Variable', Pretendard, 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
 }

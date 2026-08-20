@@ -1,0 +1,26 @@
+/*
+ * 웹폰트. 단독망 전제라 CDN 을 쓰지 않고 반입한 파일만 읽는다.
+ * 실행 중 외부 요청이 나가면 안 된다 — 여기에 @import 나 fonts.googleapis.com 링크를 넣지 마라.
+ *
+ * 파일은 frontend/public/fonts/ 에 있고 빌드하면 dist/fonts/ 로 그대로 옮겨진다.
+ * 반입 패키지는 bundle/frontend-dist 를 통째로 복사하므로 따로 챙길 것이 없다.
+ * (bundle/fonts/ 는 ultralytics 가 박스 라벨에 쓰는 Arial.ttf 자리다. 혼동하지 마라.)
+ *
+ * 둘 다 가변 폰트라 굵기마다 파일을 두지 않는다. 라이선스는 같은 폴더의 OFL-*.txt 다.
+ */
+
+@font-face {
+  font-family: 'Pretendard Variable';
+  src: url('/fonts/PretendardVariable.woff2') format('woff2-variations');
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/GeistMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}

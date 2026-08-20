@@ -1,3 +1,4 @@
+@import './styles/fonts.css';
 @import './styles/tokens.css';
 @import './styles/components.css';
 
@@ -14,27 +15,32 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-size: var(--fs-md);
+  font-size: var(--fs-base);
 }
 
 /* 포커스가 어디 있는지 항상 보여야 한다. 마우스 클릭에는 뜨지 않는다(:focus-visible). */
-:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-sm); }
+:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-input); }
 
 button {
   font: inherit;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-input);
   padding: var(--sp-2) var(--sp-4);
   cursor: pointer;
 }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* 액센트가 밝은 금색이라 글자는 어두워야 한다. 흰 글자는 1.6:1 로 읽히지 않는다. */
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 button.danger { border-color: var(--err); color: var(--err); }
 button.ghost { background: transparent; }
-/* 눌린 상태를 색으로도 보여준다. aria-pressed 가 곧 스타일 조건이라 둘이 어긋나지 않는다. */
+/*
+ * 눌린 상태를 색으로도 보여준다. aria-pressed 가 곧 스타일 조건이라 둘이 어긋나지 않는다.
+ * 배경은 여기서 칠하지 않는다 — 액센트 배경을 쓰는 칩은 자기 클래스에서 글자색까지 함께 정한다.
+ * 그러지 않으면 금색 배경 위에 금색 글자가 된다.
+ */
 button[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
 
 /* 내려받기 링크. <a> 안에 <button> 을 넣으면 대화형 요소 중첩이라 스크린리더가 헷갈린다. */
@@ -44,7 +50,7 @@ a.button {
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-input);
   padding: var(--sp-2) var(--sp-4);
   text-decoration: none;
 }
@@ -55,7 +61,7 @@ input, select, textarea {
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-input);
   padding: 5px var(--sp-3);
   width: 100%;
 }
@@ -71,18 +77,18 @@ input[aria-invalid='true'] { border-color: var(--err); }
 .spacer { margin-left: auto; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: var(--sp-4); }
 
-.btn-sm { font-size: var(--fs-sm); padding: 3px 10px; }
-.btn-xs { font-size: var(--fs-xs); padding: 2px var(--sp-3); }
+.btn-sm { font-size: var(--fs-md); padding: 3px 10px; }
+.btn-xs { font-size: var(--fs-sm); padding: 2px var(--sp-3); }
 
 .muted { color: var(--muted); }
-.small { font-size: var(--fs-sm); }
-.tiny { font-size: var(--fs-xs); }
+.small { font-size: var(--fs-md); }
+.tiny { font-size: var(--fs-sm); }
 .mono { font-family: var(--mono); }
 .error { color: var(--err); }
 .slider { width: 100%; }
 .nowrap { white-space: nowrap; }
 
-.help { font-size: var(--fs-xs); color: var(--muted-2); margin-top: 3px; line-height: 1.4; }
+.help { font-size: var(--fs-sm); color: var(--muted-2); margin-top: 3px; line-height: 1.4; }
 .help.ok { color: var(--ok); }
 .help.bad { color: var(--err); }
 .help.warn { color: var(--warn); }

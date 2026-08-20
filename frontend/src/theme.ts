@@ -11,20 +11,20 @@
 
 /** 지표별 고정 색. run 이 바뀌어도 mAP50 은 항상 같은 색이어야 눈이 헤매지 않는다. */
 export const metricSeries: Record<string, string> = {
-  mAP50: '#4f8cff', // --accent
-  'mAP50-95': '#35c46b', // --ok
-  precision: '#e2b23c', // --warn
-  recall: '#b07cff',
+  mAP50: '#e8c87c', // --accent
+  'mAP50-95': '#7fc7a0', // --ok
+  precision: '#8fa9e8',
+  recall: '#c9a96a', // --warn
 }
 
 /** 개수가 정해지지 않은 계열(손실 항목, 비교 대상 run)에 순서대로 돌려 쓴다. */
 export const palette = [
-  '#4f8cff',
-  '#35c46b',
-  '#e2b23c',
-  '#b07cff',
-  '#e2564a',
-  '#3fc7c7',
+  '#e8c87c',
+  '#7fc7a0',
+  '#8fa9e8',
+  '#e27c64',
+  '#c9a96a',
+  '#9a8fd8',
 ]
 
 export function seriesColor(index: number): string {
@@ -32,22 +32,22 @@ export function seriesColor(index: number): string {
 }
 
 export const chartAxis = {
-  stroke: '#3a4150', // --line-strong
-  tick: { fill: '#949cad', fontSize: 11 }, // --muted, 6.3:1
-  tickLine: { stroke: '#3a4150' },
+  stroke: '#43464e', // --line-strong
+  tick: { fill: '#98968f', fontSize: 10 }, // --muted-2, 5.31:1
+  tickLine: { stroke: '#43464e' },
 }
 
-export const chartGrid = { stroke: '#232833' }
+export const chartGrid = { stroke: '#2c2e35' } // --panel-2
 
 export const chartTooltip = {
   contentStyle: {
-    background: '#1d212a', // --panel-2
-    border: '1px solid #3a4150',
-    borderRadius: 6,
+    background: '#2c2e35', // --panel-2
+    border: '1px solid #43464e',
+    borderRadius: 9,
     fontSize: 12,
-    color: '#e6e8ee',
+    color: '#f5f3ee',
   },
-  labelStyle: { color: '#949cad' },
+  labelStyle: { color: '#98968f' },
 }
 
 export const chartLegend = { wrapperStyle: { fontSize: 11 } }

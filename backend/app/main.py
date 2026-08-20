@@ -50,6 +50,11 @@ def health() -> dict[str, str]:
 
 if FRONTEND_DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+    # 웹폰트는 Vite 의 public/ 을 거쳐 dist 최상단의 fonts/ 로 떨어진다 — assets/ 밖이라
+    # 따로 걸어 준다. 없으면 아래 SPA 폴백이 index.html 을 대신 돌려주고 폰트가 조용히 안 뜬다.
+    fonts_dir = FRONTEND_DIST / "fonts"
+    if fonts_dir.is_dir():
+        app.mount("/fonts", StaticFiles(directory=fonts_dir), name="fonts")
 
     @app.get("/{full_path:path}")
     def spa(full_path: str):

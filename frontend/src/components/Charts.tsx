@@ -87,8 +87,8 @@ export function MetricsChart({ events }: Props) {
               y={best.value}
               r={4}
               fill={metricSeries['mAP50-95']}
-              stroke="#fff"
-              strokeWidth={1}
+              stroke="#212328"
+              strokeWidth={2}
               isFront
             />
           )}

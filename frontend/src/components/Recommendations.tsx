@@ -15,29 +15,26 @@ function show(value: unknown): string {
 /**
  * 데이터셋 성격에 따른 파라미터 제안과, 이 설정으로 걸릴 시간·VRAM.
  *
+ * 이 조회가 컴포넌트가 아니라 훅인 이유 — 목표 카드(간편 모드)도 같은 추천값을 읽어야 한다.
+ * 카드가 따로 부르면 같은 질문을 두 번 하게 되고, 두 화면이 서로 다른 값을 보일 수 있다.
+ * 부모가 한 번 부르고 아래로 내린다.
+ *
  * 폼 값이 바뀔 때마다 서버에 물어보므로 디바운스한다. 모델 경로 검증(NewRunPanel)과 같은
  * cancelled 패턴을 쓴다 — 타이머만 취소하면 이미 날아간 이전 요청의 응답이 늦게 도착해
  * 지금 화면과 어긋난 값을 덮어쓴다.
  */
-export function Recommendations({
-  dataset,
-  values,
-  devices,
-  onApply,
-}: {
-  dataset: Dataset
-  values: Record<string, unknown>
-  devices: number[]
-  onApply: (patch: Record<string, unknown>) => void
-}) {
+export function useAdvice(
+  dataset: Dataset | undefined,
+  values: Record<string, unknown>,
+  devices: number[],
+): { rec: Recommendation | null; est: Estimate | null } {
   const [rec, setRec] = useState<Recommendation | null>(null)
   const [est, setEst] = useState<Estimate | null>(null)
-  const [showAssumptions, setShowAssumptions] = useState(false)
 
   // 제안·추정에 실제로 영향을 주는 값만 의존성으로 삼는다. 폼 전체를 넣으면
   // 관계없는 필드를 건드릴 때마다 요청이 나간다.
   const signature = JSON.stringify([
-    dataset.id,
+    dataset?.id,
     devices,
     values['model'],
     values['imgsz'],
@@ -51,6 +48,11 @@ export function Recommendations({
   ])
 
   useEffect(() => {
+    if (!dataset) {
+      setRec(null)
+      setEst(null)
+      return
+    }
     let cancelled = false
     const timer = setTimeout(() => {
       api
@@ -69,6 +71,23 @@ export function Recommendations({
     // signature 가 바뀔 때만 다시 묻는다. values 를 그대로 넣으면 매 입력마다 돈다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature])
+
+  return { rec, est }
+}
+
+/** 전문 모드에서 제안 표와 추정 시간을 펼쳐 보여준다. 조회는 부모(useAdvice)가 한다. */
+export function Recommendations({
+  values,
+  rec,
+  est,
+  onApply,
+}: {
+  values: Record<string, unknown>
+  rec: Recommendation | null
+  est: Estimate | null
+  onApply: (patch: Record<string, unknown>) => void
+}) {
+  const [showAssumptions, setShowAssumptions] = useState(false)
 
   const items = rec?.items ?? []
   const advisories = rec?.advisories ?? []
@@ -143,7 +162,7 @@ export function Recommendations({
             </tbody>
           </table>
           <div className="row tight" style={{ marginTop: 'var(--sp-4)' }}>
-            <button onClick={() => onApply(rec!.patch)}>제안 전체 적용</button>
+            <button onClick={() => onApply(rec?.patch ?? {})}>제안 전체 적용</button>
             <span className="help">적용해도 시작 전까지는 언제든 다시 고칠 수 있습니다.</span>
           </div>
         </>

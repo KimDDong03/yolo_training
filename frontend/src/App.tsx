@@ -166,7 +166,7 @@ export default function App() {
               gpus={gpus.data}
               gpusStatus={gpus.status}
               onRetryGpus={() => gpus.reload()}
-              onDatasetsChanged={() => datasets.reload()}
+              onRegisterDataset={() => setView({ kind: 'datasets' })}
               onStarted={(id) => {
                 runs.reload()
                 setView({ kind: 'run', id })

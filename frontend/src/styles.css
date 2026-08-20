@@ -24,18 +24,21 @@ body {
 button {
   font: inherit;
   color: var(--text);
-  background: var(--panel-2);
-  border: 1px solid var(--line);
+  background: transparent;
+  border: 1px solid var(--line-strong);
   border-radius: var(--r-input);
+  min-height: 40px;
   padding: var(--sp-2) var(--sp-4);
   cursor: pointer;
 }
-button:hover:not(:disabled) { border-color: var(--accent); }
-button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:hover:not(:disabled) { border-color: #5a5f6a; }
+/* 비활성은 투명도가 아니라 색으로 말한다. 흐린 글자는 대비 하한을 깬다. */
+button:disabled { background: var(--line-strong); border-color: transparent; color: var(--muted-2); cursor: not-allowed; }
 /* 액센트가 밝은 금색이라 글자는 어두워야 한다. 흰 글자는 1.6:1 로 읽히지 않는다. */
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
-button.danger { border-color: var(--err); color: var(--err); }
-button.ghost { background: transparent; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #f2dba2; border-color: #f2dba2; }
+button.danger { border-color: #5a3c36; color: var(--err); }
+button.ghost { background: transparent; border-color: transparent; min-height: 0; }
 /*
  * 눌린 상태를 색으로도 보여준다. aria-pressed 가 곧 스타일 조건이라 둘이 어긋나지 않는다.
  * 배경은 여기서 칠하지 않는다 — 액센트 배경을 쓰는 칩은 자기 클래스에서 글자색까지 함께 정한다.
@@ -45,29 +48,63 @@ button[aria-pressed='true'] { border-color: var(--accent); color: var(--accent);
 
 /* 내려받기 링크. <a> 안에 <button> 을 넣으면 대화형 요소 중첩이라 스크린리더가 헷갈린다. */
 a.button {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   font: inherit;
   color: var(--text);
-  background: var(--panel-2);
-  border: 1px solid var(--line);
+  background: transparent;
+  border: 1px solid var(--line-strong);
   border-radius: var(--r-input);
+  min-height: 40px;
   padding: var(--sp-2) var(--sp-4);
   text-decoration: none;
 }
-a.button:hover { border-color: var(--accent); }
+a.button:hover { border-color: #5a5f6a; }
 
 input, select, textarea {
   font: inherit;
   color: var(--text);
-  background: var(--panel-2);
-  border: 1px solid var(--line);
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r-input);
-  padding: 5px var(--sp-3);
+  height: 38px;
+  padding: 0 var(--sp-3);
   width: 100%;
 }
-input[type='checkbox'], input[type='radio'] { width: auto; accent-color: var(--accent); }
-input[type='range'] { padding: 0; accent-color: var(--accent); }
-input[aria-invalid='true'] { border-color: var(--err); }
+textarea { height: auto; padding: var(--sp-2) var(--sp-3); }
+
+/*
+ * 네이티브 화살표를 지우고 셰브런을 직접 그린다. 드롭다운 목록 자체는 OS 가 그리므로
+ * color-scheme 과 option 배경까지 함께 지정해야 흰 목록이 튀어나오지 않는다.
+ */
+select {
+  appearance: none;
+  color-scheme: dark;
+  padding-right: 38px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23A6A49E' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+select option { background: var(--panel); }
+input[type='checkbox'], input[type='radio'] { width: auto; height: auto; accent-color: var(--accent); }
+input[type='range'] { padding: 0; height: 14px; background: transparent; accent-color: var(--accent); }
+input[type='range']::-webkit-slider-runnable-track { height: 4px; border-radius: var(--r-full); background: var(--line-strong); }
+input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  border: 2px solid var(--bg);
+}
+input[aria-invalid='true'], select[aria-invalid='true'] { border-color: var(--err); }
+
+/* 스크롤바 — 트랙 없이 thumb 만. 값이 실시간으로 바뀌는 화면이라 테두리가 하나 더 늘면 시끄럽다. */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: #3a3d45; border: 3px solid transparent; background-clip: content-box; border-radius: var(--r-full); }
+*::-webkit-scrollbar-thumb:hover { background: #4e525c; background-clip: content-box; }
+*::-webkit-scrollbar-track { background: transparent; }
 
 /* ── 유틸 ─────────────────────────────────────────────── */
 .row { display: flex; align-items: center; gap: var(--sp-3); }
@@ -77,8 +114,8 @@ input[aria-invalid='true'] { border-color: var(--err); }
 .spacer { margin-left: auto; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: var(--sp-4); }
 
-.btn-sm { font-size: var(--fs-md); padding: 3px 10px; }
-.btn-xs { font-size: var(--fs-sm); padding: 2px var(--sp-3); }
+.btn-sm { font-size: var(--fs-md); min-height: 30px; padding: 3px 10px; }
+.btn-xs { font-size: var(--fs-sm); min-height: 24px; padding: 2px var(--sp-2); }
 
 .muted { color: var(--muted); }
 .small { font-size: var(--fs-md); }

@@ -146,7 +146,7 @@
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--r-card);
-  padding: var(--sp-4);
+  padding: var(--sp-5);
   margin-bottom: var(--sp-4);
 }
 .card > h3,
@@ -426,3 +426,67 @@ fieldset.group > legend { padding: 0; }
   background: var(--panel);
   border-top: 1px solid var(--line);
 }
+
+/* ── 새 학습 ──────────────────────────────────────────── */
+/*
+ * 이 화면은 세 가지만 묻는다 — 무엇으로 / 어디까지 / 어디서. 파라미터 46개는 그 뒤에 접혀 있다.
+ * 예전에는 그 46개가 먼저 나와서, 화면이 "무엇을 정해야 하는가" 에 답하지 않았다.
+ */
+.new-run { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.new-run-scroll { flex: 1; overflow: auto; padding: var(--sp-7) 52px 0; min-height: 0; }
+.new-run-body { max-width: 880px; margin: 0 auto; padding-bottom: var(--sp-6); }
+.new-run-head { display: flex; align-items: baseline; gap: var(--sp-3); margin-bottom: var(--sp-6); }
+.new-run-head h2 { margin: 0; font-size: var(--fs-3xl); font-weight: 600; letter-spacing: -0.035em; }
+
+.section { margin-bottom: 38px; }
+.section-label { font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.14em; color: var(--muted-2); }
+.section > h3 { margin: var(--sp-1) 0 var(--sp-4); font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.02em; }
+.section > .card { margin-bottom: 0; }
+
+.summary-line { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; font-family: var(--mono); font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
+.summary-line .warn { color: var(--accent); }
+
+/* 검수 결과를 결정 지점에 붙인다 — 이 문장 때문에 아래 목표 카드의 imgsz 가 달라진다. */
+.advice { background: var(--panel-2); border-radius: var(--r-row); padding: 15px 17px; margin-top: var(--sp-4); font-size: var(--fs-base); line-height: 1.65; }
+.advice strong { color: var(--text); font-weight: 600; }
+.advice .num { font-family: var(--mono); color: var(--accent); }
+
+.goal-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
+.goal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: var(--sp-5);
+  color: var(--text);
+  min-height: 0;
+}
+.goal:hover:not(:disabled) { border-color: var(--line-strong); }
+/* 전역 aria-pressed 규칙(글자를 액센트로)을 여기서 덮는다. 배경이 바뀌므로 글자는 그대로여야 한다. */
+.goal[aria-pressed='true'] { background: var(--panel-2); border-color: var(--accent); color: var(--text); }
+.goal-radio { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: var(--r-full); border: 1px solid var(--line-strong); flex-shrink: 0; }
+.goal[aria-pressed='true'] .goal-radio { background: var(--accent); border-color: var(--accent); }
+.goal[aria-pressed='true'] .goal-radio::after { content: ''; width: 5px; height: 5px; border-radius: var(--r-full); background: var(--bg); }
+.goal-title { font-size: 15px; font-weight: 600; }
+.goal-desc { font-size: var(--fs-base); color: var(--muted); line-height: 1.6; }
+.goal-params { font-family: var(--mono); font-size: var(--fs-sm); line-height: 2; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* 검수 권고 때문에 바뀐 값. 위 .advice 의 숫자와 같은 색이라 눈이 둘을 잇는다. */
+.goal-params .from-review { color: var(--accent); }
+.goal-time { margin-top: auto; padding-top: var(--sp-3); border-top: 1px solid var(--line); font-size: var(--fs-base); color: var(--muted); }
+.goal-time strong { font-size: var(--fs-lg); font-weight: 400; color: var(--text); }
+
+.gpu-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-3); }
+.gpu-pick { display: flex; align-items: center; gap: var(--sp-3); background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-row); padding: var(--sp-3) var(--sp-4); cursor: pointer; font-size: var(--fs-base); }
+.gpu-pick.on { background: var(--panel-2); border-color: var(--accent); }
+.gpu-pick .meter { width: 74px; height: 4px; }
+.gpu-free { font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted-2); white-space: nowrap; }
+
+.more-params { display: flex; align-items: center; gap: var(--sp-2); width: 100%; background: transparent; border: 1px solid var(--line); border-radius: var(--r-row); padding: var(--sp-3) var(--sp-4); color: var(--text); font-size: var(--fs-base); }
+.more-params .changed { margin-left: auto; font-family: var(--mono); font-size: var(--fs-sm); color: var(--accent); }
+
+.new-run-foot { flex-shrink: 0; display: flex; align-items: center; gap: var(--sp-4); padding: 18px 52px; background: var(--panel); border-top: 1px solid var(--line); }
+.foot-summary { font-size: var(--fs-lg); font-weight: 500; }
+.foot-sub { display: block; margin-top: 3px; font-family: var(--mono); font-size: var(--fs-sm); color: var(--muted); }

@@ -597,6 +597,7 @@ export function NewRunPanel({
                               key={f.key}
                               field={f}
                               value={values[f.key]}
+                              changed={values[f.key] !== f.default}
                               onChange={(v) => applyValues({ [f.key]: v }, { kind: 'manual' })}
                               candidates={f.key === 'model' ? candidates : undefined}
                               disabled={f.key === 'tensorboard' && info != null && !info.tensorboard}
@@ -777,6 +778,7 @@ function ParamFieldControl({
   disabled,
   status,
   help,
+  changed,
 }: {
   field: ParamField
   value: unknown
@@ -785,11 +787,19 @@ function ParamFieldControl({
   disabled?: boolean
   status?: FieldStatus
   help?: ReactNode
+  /** 기본값에서 벗어난 필드. 46개를 훑을 때 무엇을 건드렸는지가 먼저 보여야 한다. */
+  changed?: boolean
 }) {
   return (
+    <div className={changed ? 'field-changed' : undefined}>
     <Field
       label={field.label}
-      labelExtra={<span className="mono muted tiny"> {field.key}</span>}
+      labelExtra={
+        <>
+          <span className="mono muted tiny"> {field.key}</span>
+          {changed && <span className="changed-tag">변경됨</span>}
+        </>
+      }
       help={help ?? field.help}
       status={status}
     >
@@ -855,5 +865,6 @@ function ParamFieldControl({
         )
       }}
     </Field>
+    </div>
   )
 }

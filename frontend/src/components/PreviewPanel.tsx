@@ -349,7 +349,14 @@ function ExportPanel({ runId, weights }: { runId: string; weights: string[] }) {
 function InferenceTest({ runId }: { runId: string }) {
   const [weights, setWeights] = useState<{ value: string; label: string; size_mb: number }[]>([])
   const [selected, setSelected] = useState('')
+  /*
+   * conf 기본값은 진단이 잰 값을 쓴다. 0.25 는 ultralytics 의 관례일 뿐 이 모델에 맞는
+   * 값이 아니다. 진단을 돌리지 않았거나 서버가 "믿을 수 없다"(reliable=false)고 하면
+   * 0.25 로 남기고 근거 줄도 띄우지 않는다 — 재보지 않은 값을 권하지 않는다.
+   */
   const [conf, setConf] = useState(0.25)
+  const [confAdvice, setConfAdvice] = useState<{ conf: number; f1: number | null } | null>(null)
+  const [confTouched, setConfTouched] = useState(false)
   const [iou, setIou] = useState(0.7)
   const [imgsz, setImgsz] = useState(640)
   const [result, setResult] = useState<PredictResult | null>(null)
@@ -367,6 +374,24 @@ function InferenceTest({ runId }: { runId: string }) {
         setSelected((s) => s || r.weights.find((w) => w.label === 'best')?.value || r.weights[0]?.value || '')
       })
       .catch(() => setWeights([]))
+  }, [runId])
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .analysisReport(runId)
+      .then((r) => {
+        const c = r.conf_recommendation
+        if (cancelled || !c?.reliable || c.conf == null) return
+        setConfAdvice({ conf: c.conf, f1: c.f1 })
+        // 사용자가 이미 슬라이더를 만졌으면 덮어쓰지 않는다.
+        setConf((v) => (confTouched ? v : c.conf!))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId])
 
   async function predict(file: File) {
@@ -388,10 +413,10 @@ function InferenceTest({ runId }: { runId: string }) {
   }
 
   return (
-    <>
+    <div className="infer-grid">
       <div className="card">
         <h3>추론 설정</h3>
-        <div className="grid">
+        <div className="stack">
           <Field label="가중치">
             {(props) => (
               <select {...props} value={selected} onChange={(e) => setSelected(e.target.value)}>
@@ -403,7 +428,25 @@ function InferenceTest({ runId }: { runId: string }) {
               </select>
             )}
           </Field>
-          <RangeField label="확신도 임계값 conf" value={conf} min={0.01} max={0.95} step={0.01} onChange={setConf} />
+          <div>
+            <RangeField
+              label="확신도 임계값 conf"
+              value={conf}
+              min={0.01}
+              max={0.95}
+              step={0.01}
+              onChange={(v) => {
+                setConfTouched(true)
+                setConf(v)
+              }}
+            />
+            {confAdvice && (
+              <div className="help">
+                진단이 이 모델에서 잰 값입니다 — {confAdvice.conf} 에서 F1 이 가장 높았습니다
+                {confAdvice.f1 != null && ` (${(confAdvice.f1 * 100).toFixed(1)}%)`}.
+              </div>
+            )}
+          </div>
           <RangeField label="NMS IoU" value={iou} min={0.1} max={0.95} step={0.05} onChange={setIou} />
           <Field label="이미지 크기 imgsz">
             {(props) => (
@@ -422,6 +465,7 @@ function InferenceTest({ runId }: { runId: string }) {
         <div className="help">추론은 항상 CPU 에서 실행됩니다 — 학습 중인 GPU 와 경합하지 않기 위해서입니다.</div>
       </div>
 
+      <div>
       <div
         className={`drop ${over ? 'over' : ''}`}
         onDragOver={(e) => {
@@ -493,7 +537,8 @@ function InferenceTest({ runId }: { runId: string }) {
           )}
         </div>
       )}
-    </>
+      </div>
+    </div>
   )
 }
 

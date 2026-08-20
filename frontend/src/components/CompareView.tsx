@@ -132,22 +132,20 @@ export function CompareView({ runIds }: { runIds: string[] }) {
       <div className="card">
         <div className="card-head">
           <h3>실행 비교 ({loaded.length}개)</h3>
-          <label className="sr-only" htmlFor="compare-metric">
-            비교할 지표
-          </label>
-          <select
-            id="compare-metric"
-            className="spacer"
-            style={{ width: 140 }}
-            value={metric}
-            onChange={(e) => setMetric(e.target.value as (typeof METRICS)[number])}
-          >
+          <div className="segmented spacer" role="radiogroup" aria-label="비교할 지표">
             {METRICS.map((m) => (
-              <option key={m} value={m}>
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={metric === m}
+                className="tiny mono"
+                onClick={() => setMetric(m)}
+              >
                 {m}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
         </div>
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
@@ -164,7 +162,7 @@ export function CompareView({ runIds }: { runIds: string[] }) {
                 name={l.run.name}
                 stroke={seriesColor(runIds.indexOf(l.run.id))}
                 dot={false}
-                strokeWidth={1.8}
+                strokeWidth={2.2}
                 isAnimationActive={false}
                 connectNulls
               />
@@ -172,31 +170,23 @@ export function CompareView({ runIds }: { runIds: string[] }) {
           </LineChart>
         </ResponsiveContainer>
 
-        <table style={{ marginTop: 8 }}>
-          <caption className="sr-only">실행별 최고 mAP50-95</caption>
-          <thead>
-            <tr>
-              <th scope="col">실행</th>
-              <th scope="col">최고 mAP50-95</th>
-              <th scope="col">에폭</th>
-            </tr>
-          </thead>
-          <tbody>
-            {best.map((b) => (
-              <tr key={b.id}>
-                <td>
-                  <span style={{ color: seriesColor(runIds.indexOf(b.id)) }} aria-hidden="true">
-                    ■
-                  </span>{' '}
-                  {b.name}
-                </td>
-                <td>{b.value < 0 ? '-' : b.value.toFixed(4)}</td>
-                <td className="muted">{b.epoch || '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
+
+      {/* 결론(어느 실행이 이겼나)과 이유(무엇이 달랐나)를 나란히 둔다. */}
+      <div className="compare-grid">
+        <div className="card">
+          <h3>최고 성능</h3>
+          <ul className="best-list">
+            {best.map((b) => (
+              <li key={b.id}>
+                <span className="best-bar" style={{ background: seriesColor(runIds.indexOf(b.id)) }} aria-hidden="true" />
+                <span className="best-name">{b.name}</span>
+                <span className="best-value">{b.value < 0 ? '-' : b.value.toFixed(4)}</span>
+                <span className="best-epoch">{b.epoch ? `${b.epoch}에폭` : '-'}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
 
       <div className="card">
         <h3>다른 설정만</h3>
@@ -232,6 +222,7 @@ export function CompareView({ runIds }: { runIds: string[] }) {
             </tbody>
           </table>
         )}
+        </div>
       </div>
     </>
   )

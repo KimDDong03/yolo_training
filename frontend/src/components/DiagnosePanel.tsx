@@ -50,7 +50,7 @@ function toOverlay(boxes: AnalysisBox[], kind: 'gt' | 'pred'): OverlayBox[] {
  */
 function NextActionCard({ actions }: { actions: NextAction[] }) {
   return (
-    <div className="card">
+    <div className="card card-lead">
       <div className="card-head">
         <h3>다음에 할 일</h3>
       </div>
@@ -307,116 +307,124 @@ export function DiagnosePanel({ run, dataset }: { run: Run; dataset?: Dataset | 
       </div>
 
       {report && (
-        <>
-          {report.next_actions && report.next_actions.length > 0 && (
-            <NextActionCard actions={report.next_actions} />
-          )}
+        /*
+         * 2열. 왼쪽은 "무엇을 할까" 로 읽는 흐름(다음 행동 → 무엇이 깎는가 → 실제 사진),
+         * 오른쪽은 참고용 수치다. 한 줄로 쌓으면 결론이 스크롤 아래로 밀린다.
+         */
+        <div className="diag-grid">
+          <div className="stack">
+            {report.next_actions && report.next_actions.length > 0 && (
+              <NextActionCard actions={report.next_actions} />
+            )}
 
-          {/* 키 자체가 없으면 오류 분해가 생기기 전(schema_version 1)의 리포트다. */}
-          {report.tide?.failed && <p className="help warn">{report.tide.message}</p>}
-          {report.tide && !report.tide.failed && <TideCard tide={report.tide} />}
+            {/* 키 자체가 없으면 오류 분해가 생기기 전(schema_version 1)의 리포트다. */}
+            {report.tide?.failed && <p className="help warn">{report.tide.message}</p>}
+            {report.tide && !report.tide.failed && <TideCard tide={report.tide} />}
 
-          <div className="card">
-            <div className="card-head">
-              <h3>클래스별 성능</h3>
-              <span className="small muted spacer">
-                이미지 {report.overall.images} · 인스턴스 {report.overall.instances} · mAP50-95{' '}
-                {pct(report.overall.map50_95)}
-              </span>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>클래스</th>
-                  <th>인스턴스</th>
-                  <th>정밀도</th>
-                  <th>재현율</th>
-                  <th>mAP50</th>
-                  <th>mAP50-95</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.per_class.map((c) => (
-                  <tr key={c.cls}>
-                    <td>{c.name}</td>
-                    <td>{c.instances}</td>
-                    <td>{pct(c.precision)}</td>
-                    <td>{pct(c.recall)}</td>
-                    <td>{pct(c.ap50)}</td>
-                    <td className={c.evaluated ? undefined : 'muted'}>
-                      {c.evaluated ? pct(c.ap50_95) : '평가 안 됨'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {report.worst_classes.map((w, i) => (
-              <div key={i} className="help warn" style={{ marginTop: 'var(--sp-3)' }}>
-                {w.message}
+            <div className="card">
+              <div className="card-head">
+                <h3>가장 많이 틀린 사진</h3>
+                <span className="small muted spacer">
+                  {report.gallery_total}장 중 {report.gallery.length}장 · 신뢰도{' '}
+                  {report.gallery_conf} 기준
+                </span>
               </div>
-            ))}
-          </div>
-
-          <div className="card">
-            <div className="card-head">
-              <h3>배포용 신뢰도 임계값</h3>
-            </div>
-            {report.conf_recommendation.reliable ? (
-              <p className="small">
-                <strong>{report.conf_recommendation.conf}</strong> 에서 F1 이 가장 높습니다 (
-                {pct(report.conf_recommendation.f1)}). 정밀도 {pct(report.conf_recommendation.precision)} ·
-                재현율 {pct(report.conf_recommendation.recall)}.
-                <span className="muted"> 추론 화면 기본값은 0.25 입니다.</span>
+              {report.gallery.length === 0 ? (
+                <EmptyState title="틀린 사진이 없습니다." />
+              ) : (
+                <div className="gallery">
+                  {report.gallery.map((item) => (
+                    <figure key={item.image}>
+                      <BoxOverlay
+                        src={api.datasetImageUrl(run.dataset_id, item.image)}
+                        alt={item.name}
+                        boxes={[...toOverlay(item.gt, 'gt'), ...toOverlay(item.pred, 'pred')]}
+                        onZoom={setZoom}
+                      />
+                      <figcaption>
+                        {item.name}
+                        <br />
+                        <span className="muted">
+                          놓침 {item.fn} · 오검출 {item.fp} · 맞음 {item.tp}
+                        </span>
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+              )}
+              <p className="help">
+                초록=정답 · 주황=놓친 정답 · 파랑=맞은 검출 · 빨강 점선=오검출
               </p>
-            ) : (
-              <p className="help warn">{report.conf_recommendation.message}</p>
-            )}
-          </div>
-
-          {report.label_issues && (
-            <LabelIssueCard
-              issues={report.label_issues}
-              datasetId={run.dataset_id}
-              onZoom={setZoom}
-            />
-          )}
-
-          <div className="card">
-            <div className="card-head">
-              <h3>가장 많이 틀린 사진</h3>
-              <span className="small muted spacer">
-                {report.gallery_total}장 중 {report.gallery.length}장 · 신뢰도{' '}
-                {report.gallery_conf} 기준
-              </span>
             </div>
-            {report.gallery.length === 0 ? (
-              <EmptyState title="틀린 사진이 없습니다." />
-            ) : (
-              <div className="gallery">
-                {report.gallery.map((item) => (
-                  <figure key={item.image}>
-                    <BoxOverlay
-                      src={api.datasetImageUrl(run.dataset_id, item.image)}
-                      alt={item.name}
-                      boxes={[...toOverlay(item.gt, 'gt'), ...toOverlay(item.pred, 'pred')]}
-                      onZoom={setZoom}
-                    />
-                    <figcaption>
-                      {item.name}
-                      <br />
-                      <span className="muted">
-                        놓침 {item.fn} · 오검출 {item.fp} · 맞음 {item.tp}
-                      </span>
-                    </figcaption>
-                  </figure>
-                ))}
-              </div>
-            )}
-            <p className="help">
-              초록=정답 · 주황=놓친 정답 · 파랑=맞은 검출 · 빨강 점선=오검출
-            </p>
           </div>
-        </>
+          <div className="stack">
+            <div className="card">
+              <div className="card-head">
+                <h3>클래스별 성능</h3>
+                <span className="small muted spacer">
+                  이미지 {report.overall.images} · 인스턴스 {report.overall.instances} · mAP50-95{' '}
+                  {pct(report.overall.map50_95)}
+                </span>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>클래스</th>
+                    <th>인스턴스</th>
+                    <th>정밀도</th>
+                    <th>재현율</th>
+                    <th>mAP50</th>
+                    <th>mAP50-95</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.per_class.map((c) => (
+                    <tr key={c.cls}>
+                      <td>{c.name}</td>
+                      <td>{c.instances}</td>
+                      <td>{pct(c.precision)}</td>
+                      <td>{pct(c.recall)}</td>
+                      <td>{pct(c.ap50)}</td>
+                      <td className={c.evaluated ? undefined : 'muted'}>
+                        {c.evaluated ? pct(c.ap50_95) : '평가 안 됨'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {report.worst_classes.map((w, i) => (
+                <div key={i} className="help warn" style={{ marginTop: 'var(--sp-3)' }}>
+                  {w.message}
+                </div>
+              ))}
+            </div>
+
+            <div className="card">
+              <div className="card-head">
+                <h3>배포용 신뢰도 임계값</h3>
+              </div>
+              {report.conf_recommendation.reliable ? (
+                <p className="small">
+                  <strong className="conf-value">{report.conf_recommendation.conf}</strong> 에서 F1 이 가장 높습니다 (
+                  {pct(report.conf_recommendation.f1)}). 정밀도 {pct(report.conf_recommendation.precision)} ·
+                  재현율 {pct(report.conf_recommendation.recall)}.
+                  <span className="muted"> 추론 화면 기본값은 0.25 입니다.</span>
+                </p>
+              ) : (
+                <p className="help warn">{report.conf_recommendation.message}</p>
+              )}
+            </div>
+
+            {report.label_issues && (
+              <LabelIssueCard
+                issues={report.label_issues}
+                datasetId={run.dataset_id}
+                onZoom={setZoom}
+              />
+            )}
+
+          </div>
+        </div>
       )}
 
       <Modal

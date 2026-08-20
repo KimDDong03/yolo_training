@@ -169,7 +169,8 @@ export function TunePanel({
         씁니다. <strong>탐색이 도는 동안 그 GPU 로는 학습이 시작되지 않습니다.</strong>
       </p>
 
-      <div className="grid">
+      {/* 입력 넷은 한 줄에 둔다 — 서로를 보면서 정하는 값이라 2열로 접으면 짝이 어긋난다. */}
+      <div className="tune-inputs">
         <Field label="시도 횟수" help="많을수록 좋은 조합을 찾을 확률이 오르고 그만큼 오래 걸립니다.">
           {(props) => (
             <input

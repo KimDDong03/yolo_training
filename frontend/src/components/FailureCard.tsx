@@ -68,12 +68,12 @@ export function FailureCard({ run, onStarted }: { run: Run; onStarted: (runId: s
 
   return (
     <div className="card">
-      <div className="card-head">
-        <h3 className="error">{diagnosis.title}</h3>
-      </div>
+      {/* 원문 오류가 아니라 진단 문장이 먼저다. 원문은 아래 접힌 블록에 그대로 남는다. */}
+      <div className="diag-label">진단</div>
+      <h3 className="diag-title">{diagnosis.title}</h3>
 
-      <p className="small">{diagnosis.cause}</p>
-      <p className="small muted">{diagnosis.fix}</p>
+      <p className="diag-body">{diagnosis.cause}</p>
+      <p className="diag-body muted">{diagnosis.fix}</p>
 
       {diagnosis.retry && (
         <>
@@ -98,7 +98,7 @@ export function FailureCard({ run, onStarted }: { run: Run; onStarted: (runId: s
             </table>
           )}
           <div className="row tight" style={{ marginTop: 'var(--sp-4)' }}>
-            <button onClick={retry} disabled={busy}>
+            <button className="primary" onClick={retry} disabled={busy}>
               {busy ? '시작하는 중…' : diagnosis.retry.label}
             </button>
             <span className="help">
@@ -111,14 +111,24 @@ export function FailureCard({ run, onStarted }: { run: Run; onStarted: (runId: s
       {(diagnosis.evidence.length > 0 || diagnosis.log_tail.length > 0) && (
         <details style={{ marginTop: 'var(--sp-4)' }}>
           <summary className="small muted">원문 보기</summary>
-          {diagnosis.evidence.length > 0 && (
-            <pre className="log small">{diagnosis.evidence.join('\n')}</pre>
-          )}
-          {diagnosis.log_tail.length > 0 && (
-            <pre className="log small">{diagnosis.log_tail.join('\n')}</pre>
-          )}
+          {/* 오류 줄만 색을 준다. 전부 빨갛게 하면 어디가 문제인지 다시 못 찾는다. */}
+          {diagnosis.evidence.length > 0 && <LogLines lines={diagnosis.evidence} />}
+          {diagnosis.log_tail.length > 0 && <LogLines lines={diagnosis.log_tail} />}
         </details>
       )}
     </div>
+  )
+}
+
+/** 원문 로그. Error/Traceback 같은 줄만 --err 로 남기고 나머지는 그대로 둔다. */
+function LogLines({ lines }: { lines: string[] }) {
+  return (
+    <pre className="log small">
+      {lines.map((line, i) => (
+        <div key={i} className={/error|traceback|exception|failed/i.test(line) ? 'err' : undefined}>
+          {line}
+        </div>
+      ))}
+    </pre>
   )
 }

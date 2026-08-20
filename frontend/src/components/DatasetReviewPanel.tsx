@@ -92,13 +92,13 @@ export function DatasetReviewPanel({ dataset }: { dataset: Dataset | null | unde
           <p className="muted small">발견된 문제가 없습니다.</p>
         ) : (
           <div className="row wrap tight" role="group" aria-label="문제 종류 고르기">
-            <button className="btn-sm" aria-pressed={!category} onClick={() => setCategory('')}>
+            <button className="chip" aria-pressed={!category} onClick={() => setCategory('')}>
               샘플 보기
             </button>
             {problems.map((c) => (
               <button
                 key={c.code}
-                className="btn-sm"
+                className="chip"
                 aria-pressed={category === c.code}
                 onClick={() => setCategory(c.code)}
               >
@@ -197,7 +197,7 @@ function SampleImage({
   const overlay: OverlayBox[] = boxes.map((b) => ({
     box: [b.cx - b.w / 2, b.cy - b.h / 2, b.cx + b.w / 2, b.cy + b.h / 2],
     label: b.name,
-    color: 'var(--ok)',
+    kind: 'gt',
   }))
 
   return (

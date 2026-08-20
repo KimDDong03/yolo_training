@@ -22,7 +22,7 @@ function pct(value: number | null | undefined): string {
   return value === null || value === undefined ? '-' : value.toFixed(3)
 }
 
-/** 정답=초록(놓친 것은 주황 굵게), 맞은 예측=파랑, 오검출=빨강 점선. */
+/** 색은 BoxOverlay 가 정한다. 여기서는 무엇인지만 말한다. */
 function toOverlay(boxes: AnalysisBox[], kind: 'gt' | 'pred'): OverlayBox[] {
   return boxes.map((b) => {
     if (kind === 'gt') {
@@ -30,16 +30,14 @@ function toOverlay(boxes: AnalysisBox[], kind: 'gt' | 'pred'): OverlayBox[] {
       return {
         box: b.box,
         label: missed ? `놓침: ${b.name}` : `정답: ${b.name}`,
-        color: missed ? 'var(--warn)' : 'var(--ok)',
-        emphasis: missed,
+        kind: missed ? 'missed' : 'gt',
       }
     }
     const wrong = b.state === 'false'
     return {
       box: b.box,
       label: `${wrong ? '오검출' : '검출'}: ${b.name} ${b.conf ?? ''}`,
-      color: wrong ? 'var(--err)' : 'var(--accent)',
-      dashed: wrong,
+      kind: wrong ? 'false' : 'hit',
     }
   })
 }
@@ -113,18 +111,17 @@ function LabelIssueCard({
                   ...item.gt.map((b) => ({
                     box: b.box,
                     label: `정답: ${b.name}`,
-                    color: 'var(--ok)',
+                    kind: 'gt' as const,
                   })),
                   ...item.findings.flatMap((f) =>
                     f.ref_box
-                      ? [{ box: f.ref_box, label: `근거: ${f.ref_name}`, color: 'var(--muted)', dashed: true }]
+                      ? [{ box: f.ref_box, label: `근거: ${f.ref_name}`, kind: 'evidence' as const }]
                       : [],
                   ),
                   ...item.findings.map((f) => ({
                     box: f.box,
                     label: `${f.label}: ${f.name}`,
-                    color: 'var(--warn)',
-                    emphasis: true,
+                    kind: 'missed' as const,
                   })),
                 ]}
                 onZoom={onZoom}

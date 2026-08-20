@@ -313,7 +313,7 @@ td.diff { color: var(--accent); background: var(--accent-weak); }
 .drop { border: 1px dashed var(--line-strong); border-radius: var(--r-card); color: var(--muted); }
 .drop.over { border-color: var(--accent); color: var(--accent); }
 /* 실제 클릭 대상. 파일 input 은 형제로 빼서 대화형 요소 중첩을 피한다. */
-.drop > button { width: 100%; padding: 18px; background: transparent; border: none; color: inherit; border-radius: var(--r-card); }
+.drop > button { width: 100%; min-height: 0; padding: 34px; background: transparent; border: none; color: inherit; border-radius: var(--r-card); }
 .drop > button:hover:not(:disabled) { color: var(--text); border-color: transparent; }
 
 /* ── 다이얼로그 ───────────────────────────────────────── */
@@ -490,3 +490,73 @@ fieldset.group > legend { padding: 0; }
 .new-run-foot { flex-shrink: 0; display: flex; align-items: center; gap: var(--sp-4); padding: 18px 52px; background: var(--panel); border-top: 1px solid var(--line); }
 .foot-summary { font-size: var(--fs-lg); font-weight: 500; }
 .foot-sub { display: block; margin-top: 3px; font-family: var(--mono); font-size: var(--fs-sm); color: var(--muted); }
+
+/* ── 데이터셋 목록 ────────────────────────────────────── */
+/*
+ * 표를 카드로 바꿨다. 표는 열 하나에 값 하나라서, 판단에 필요한 train/val 비율과 검수
+ * 경고가 들어갈 자리가 없었다. 카드는 그 셋을 한 줄에 같이 놓는다.
+ */
+.ds-list { display: flex; flex-direction: column; gap: var(--sp-4); }
+.ds-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card); padding: var(--sp-5); }
+.ds-head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.ds-name { font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.02em; }
+.ds-path { margin-top: var(--sp-2); font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted-2); word-break: break-all; }
+.ds-card .card { background: var(--bg); }
+
+/* ── 칩 (문제 유형 고르기 등) ─────────────────────────── */
+/*
+ * 고른 칩은 배경을 채운다. 그래서 글자색을 반드시 여기서 뒤집어야 한다 —
+ * styles.css 의 전역 aria-pressed 규칙은 글자를 액센트색으로 두는데,
+ * 그대로 두면 금색 배경 위에 금색 글자가 된다.
+ */
+.chip {
+  min-height: 30px;
+  padding: 4px var(--sp-3);
+  font-size: var(--fs-md);
+  border-radius: var(--r-chip);
+  border-color: var(--line-strong);
+  white-space: nowrap;
+}
+.chip[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+/* ── 실패 진단 ────────────────────────────────────────── */
+/* 원문 오류가 아니라 진단 문장이 먼저 눈에 들어와야 한다. 원문은 아래 접힌 블록에 있다. */
+.diag-label { font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.14em; text-transform: uppercase; color: var(--err); }
+.diag-title { margin: var(--sp-1) 0 var(--sp-4); font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.03em; }
+.diag-body { margin: 0 0 var(--sp-3); font-size: var(--fs-base); line-height: 1.7; }
+
+/* ── 로그 (접이식) ────────────────────────────────────── */
+.log-card .log { min-height: 118px; }
+.log-toggle { min-height: 0; padding: 0; gap: var(--sp-2); font-size: var(--fs-lg); font-weight: 600; color: var(--text); }
+.log-toggle:hover:not(:disabled) { border-color: transparent; }
+
+/* ── 예측 패널 ────────────────────────────────────────── */
+/*
+ * 이미지는 원본 비율 그대로 둔다(.preview-img 는 width:100% + height:auto).
+ * object-fit: cover 를 쓰면 박스 오버레이의 퍼센트 좌표가 어긋난다 — 절대 넣지 마라.
+ */
+.preview-stage { position: relative; border-radius: 12px; background: #141518; overflow: hidden; }
+.preview-stage .preview-img { border: none; border-radius: 12px; }
+.preview-name {
+  position: absolute;
+  left: var(--sp-3);
+  bottom: var(--sp-3);
+  background: rgba(20, 21, 24, 0.78);
+  border-radius: var(--r-chip);
+  padding: 4px var(--sp-2);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.thumb-strip { display: flex; gap: var(--sp-1); overflow-x: auto; margin-top: var(--sp-3); padding-bottom: var(--sp-1); }
+.thumb-strip > button { flex: 0 0 auto; width: 78px; height: 58px; min-height: 0; padding: 0; border: 2px solid transparent; border-radius: var(--r-chip); background: none; overflow: hidden; opacity: 0.5; }
+.thumb-strip > button:hover:not(:disabled) { opacity: 0.8; border-color: transparent; }
+/* 지금 보고 있는 에폭만 또렷하다. 스크러버 위치를 눈으로 다시 확인할 수 있어야 한다. */
+.thumb-strip > button.on { border-color: var(--accent); opacity: 1; }
+.thumb-strip img { display: block; width: 100%; height: 100%; object-fit: cover; }

@@ -141,19 +141,49 @@ function EpochPreview({ runId, events }: { runId: string; events: TrainEvent[] }
       />
 
       <div style={{ display: 'grid', gap: 10, gridTemplateColumns: showGt && gt ? '1fr 1fr' : '1fr', marginTop: 10 }}>
-        <figure style={{ margin: 0 }}>
+        <figure className="preview-stage" style={{ margin: 0 }}>
           <img className="preview-img" src={api.fileUrl(runId, pred)} alt={`${epoch} 에폭 예측`} />
-          <figcaption className="small muted">예측</figcaption>
+          <figcaption className="preview-name">{fileName(pred)}</figcaption>
         </figure>
         {showGt && gt && (
-          <figure style={{ margin: 0 }}>
+          <figure className="preview-stage" style={{ margin: 0 }}>
             <img className="preview-img" src={api.fileUrl(runId, gt)} alt={`${epoch} 에폭 정답`} />
-            <figcaption className="small muted">정답(GT)</figcaption>
+            <figcaption className="preview-name">{fileName(gt)}</figcaption>
           </figure>
         )}
       </div>
+
+      {/*
+        에폭 썸네일. 100에폭이면 100장이라 전부 받으면 안 된다 — loading="lazy" 로 보이는
+        것만 받게 두고, 가로 스크롤로 나머지에 닿는다.
+      */}
+      <div className="thumb-strip" role="group" aria-label="에폭 썸네일">
+        {frames.map(([e, fs], i) => {
+          const thumb = fs.find((f) => f.includes('_pred')) ?? fs[0]
+          const on = i === Math.min(index, frames.length - 1)
+          return (
+            <button
+              key={e}
+              className={on ? 'on' : undefined}
+              aria-label={`${e} 에폭`}
+              aria-current={on ? 'true' : undefined}
+              onClick={() => {
+                setFollow(false)
+                setIndex(i)
+              }}
+            >
+              <img src={api.fileUrl(runId, thumb)} alt="" loading="lazy" />
+            </button>
+          )
+        })}
+      </div>
     </>
   )
+}
+
+/** 경로에서 파일 이름만. 칩에 전체 경로를 넣으면 이미지 절반을 덮는다. */
+function fileName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path
 }
 
 function Plots({ runId, artifacts, finished }: { runId: string; artifacts: Artifacts | null; finished: boolean }) {

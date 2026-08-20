@@ -10,6 +10,12 @@ export const COMPARE_LIMIT = 6
 
 const LIVE: string[] = ['running', 'queued']
 
+const SORT_KEY = 'yolo.sidebar.sort'
+type Sort = 'recent' | 'status'
+
+/** 상태순의 순서. 손볼 것이 있는 실행(실패·중지)이 먼저 온다. */
+const STATUS_ORDER = ['running', 'queued', 'failed', 'stopped', 'completed']
+
 interface Props {
   runs: Run[]
   runsStatus: LoadStatus
@@ -45,7 +51,18 @@ export function Sidebar({
   onDeleteRun,
 }: Props) {
   const [query, setQuery] = useState('')
+  /*
+   * 정렬은 골라 둔 것을 기억한다. 매번 다시 고르게 하면 있으나 마나다.
+   * 최신순과 상태순 둘뿐이다 — 이름순은 검색(Ctrl+K)이 대신한다.
+   */
+  const [sort, setSort] = useState<Sort>(() =>
+    localStorage.getItem(SORT_KEY) === 'status' ? 'status' : 'recent',
+  )
   const searchRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    localStorage.setItem(SORT_KEY, sort)
+  }, [sort])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -64,12 +81,16 @@ export function Sidebar({
     const shown = runs.filter(
       (r) => !needle || r.name.toLowerCase().includes(needle) || r.id.toLowerCase().includes(needle),
     )
-    const byRecent = (a: Run, b: Run) => b.created_at - a.created_at
+    // 상태순에서도 같은 상태끼리는 최신순이다. 그래야 묶어 놓고도 방금 것을 찾을 수 있다.
+    const cmp = (a: Run, b: Run) =>
+      (sort === 'status'
+        ? STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status)
+        : 0) || b.created_at - a.created_at
     return [
-      shown.filter((r) => LIVE.includes(r.status)).sort(byRecent),
-      shown.filter((r) => !LIVE.includes(r.status)).sort(byRecent),
+      shown.filter((r) => LIVE.includes(r.status)).sort(cmp),
+      shown.filter((r) => !LIVE.includes(r.status)).sort(cmp),
     ]
-  }, [runs, query])
+  }, [runs, query, sort])
 
   const currentId = view.kind === 'run' ? view.id : null
   const atLimit = compare.length >= COMPARE_LIMIT
@@ -192,7 +213,21 @@ export function Sidebar({
 
         {past.length > 0 && (
           <>
-            <div className="sidebar-section">지난 실행 · {past.length}</div>
+            <div className="sidebar-section">
+              <span>지난 실행 · {past.length}</span>
+              <label className="sr-only" htmlFor="run-sort">
+                실행 정렬 기준
+              </label>
+              <select
+                id="run-sort"
+                className="sort-select"
+                value={sort}
+                onChange={(e) => setSort(e.target.value as Sort)}
+              >
+                <option value="recent">최신순</option>
+                <option value="status">상태순</option>
+              </select>
+            </div>
             <ul>{past.map(row)}</ul>
           </>
         )}

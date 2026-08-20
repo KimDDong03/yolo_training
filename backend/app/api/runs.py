@@ -30,6 +30,7 @@ from app.services import (
     param_schema,
     predict,
     run_manager,
+    run_summary,
 )
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -44,10 +45,14 @@ def _run_or_404(run_id: str) -> dict[str, Any]:
 
 @router.get("")
 def list_runs() -> list[dict[str, Any]]:
-    return [
-        db.row_to_run(r)
-        for r in db.query("SELECT * FROM runs ORDER BY created_at DESC")
-    ]
+    runs: list[dict[str, Any]] = []
+    for row in db.query("SELECT * FROM runs ORDER BY created_at DESC"):
+        run = db.row_to_run(row)
+        # 사이드바가 목록에서 바로 진행률과 최고 mAP 를 보여준다. DB 에 없는 값이라
+        # events.jsonl 에서 뽑는데, 2초 폴링이라 run_summary 가 (mtime, size) 로 캐시한다.
+        run["summary"] = run_summary.summarize(run_manager.run_dir_for(run["id"]))
+        runs.append(run)
+    return runs
 
 
 @router.get("/{run_id}")

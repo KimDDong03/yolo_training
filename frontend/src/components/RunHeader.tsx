@@ -1,22 +1,48 @@
-import { useMemo, type ReactNode } from 'react'
-import { formatDuration, statusLabel } from '../format'
-import type { Run } from '../types'
+import { useMemo } from 'react'
+import { statusLabel } from '../format'
+import type { Dataset, Run, TrainEvent } from '../types'
 import type { StreamState } from '../useRunStream'
 import { useConfirm } from './ui/Dialog'
 
 interface Props {
   run: Run
+  /** 목록 응답에는 데이터셋이 없다. 상세를 받아 오는 App 이 따로 내려준다. */
+  dataset: Dataset | null | undefined
   stream: StreamState
   onStop: (mode: 'graceful' | 'force') => void
+}
+
+/** `18:42` — 남은 시간은 폭이 좁고 자주 바뀌어서 "18분 42초" 보다 시계 표기가 읽기 쉽다. */
+function clock(seconds: number) {
+  const s = Math.max(0, Math.round(seconds))
+  const parts = [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60]
+  const shown = parts[0] > 0 ? parts : parts.slice(1)
+  return shown.map((n, i) => (i === 0 ? String(n) : String(n).padStart(2, '0'))).join(':')
+}
+
+function wallClock(inSeconds: number) {
+  return new Date(Date.now() + inSeconds * 1000).toLocaleTimeString('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+/** ultralytics 는 train/box_loss 처럼 나눠 준다. 합쳐야 "지금 손실" 이 된다. */
+function trainLoss(event: TrainEvent | undefined) {
+  const keys = Object.keys(event?.metrics ?? {}).filter((k) => k.includes('loss') && k.includes('train'))
+  if (!keys.length) return null
+  return keys.reduce((sum, k) => sum + (event?.metrics?.[k] ?? 0), 0)
 }
 
 /**
  * 지금 보고 있는 run 의 상태 줄.
  *
- * 예전에는 앱 헤더에 셀렉트·배지·진행률·정지 버튼·GPU 가 한 줄로 뭉쳐 있었다.
- * run 에 딸린 것은 여기로 내리고, 헤더에는 앱 전체에 해당하는 것만 남긴다.
+ * 이 화면이 먼저 답해야 하는 질문은 "지금 잘 되고 있나" 다. 그래서 크기를 진행률과
+ * mAP·손실 두 지표에 몰아주고, 나머지(데이터셋·모델·GPU)는 이름 아래 한 줄로 내렸다.
+ * 예전의 동등한 stat 4개는 무엇을 먼저 봐야 하는지를 알려주지 않았다.
  */
-export function RunHeader({ run, stream, onStop }: Props) {
+export function RunHeader({ run, dataset, stream, onStop }: Props) {
   const confirm = useConfirm()
 
   const progress = useMemo(() => {
@@ -30,9 +56,10 @@ export function RunHeader({ run, stream, onStop }: Props) {
     return { total, done, fraction, eta: last?.eta_s ?? null }
   }, [stream.events, stream.batch])
 
-  const stats = useMemo(() => {
+  const kpi = useMemo(() => {
     const epochs = stream.events.filter((e) => e.t === 'epoch')
     const last = epochs[epochs.length - 1]
+    const prev = epochs[epochs.length - 2]
 
     let bestValue: number | null = null
     let bestEpoch: number | null = null
@@ -44,21 +71,23 @@ export function RunHeader({ run, stream, onStop }: Props) {
       }
     }
 
-    // ultralytics 는 train/box_loss 처럼 나눠 준다. 합쳐야 "지금 손실" 이 된다.
-    const trainLossKeys = Object.keys(last?.metrics ?? {}).filter((k) => k.includes('loss') && k.includes('train'))
-    const loss = trainLossKeys.length
-      ? trainLossKeys.reduce((sum, k) => sum + (last?.metrics?.[k] ?? 0), 0)
-      : (stream.batch?.loss ?? null)
+    const map = last?.summary?.['mAP50-95'] ?? null
+    const mapPrev = prev?.summary?.['mAP50-95'] ?? null
+    const loss = trainLoss(last)
+    const lossPrev = trainLoss(prev)
 
-    // 시계를 따로 돌리지 않는다 — 학습 중에는 이벤트가 계속 들어와 마지막 시각이 곧 현재다.
-    const lastTs = stream.batch?.ts ?? stream.events[stream.events.length - 1]?.ts ?? null
-    const endTs = run.finished_at ?? lastTs
-    const elapsed = run.started_at && endTs ? endTs - run.started_at : null
-
-    return { bestValue, bestEpoch, loss, elapsed }
-  }, [stream.events, stream.batch, run.started_at, run.finished_at])
+    return {
+      map,
+      mapDelta: map != null && mapPrev != null ? map - mapPrev : null,
+      bestValue,
+      bestEpoch,
+      loss,
+      lossDelta: loss != null && lossPrev != null ? loss - lossPrev : null,
+    }
+  }, [stream.events])
 
   const percent = Math.round(progress.fraction * 100)
+  const running = run.status === 'running'
 
   async function forceStop() {
     const ok = await confirm({
@@ -73,62 +102,75 @@ export function RunHeader({ run, stream, onStop }: Props) {
   return (
     <header className="run-header">
       <div className="row wrap">
-        <strong>{run.name}</strong>
+        <h2 className="run-title">{run.name}</h2>
         <span className={`badge ${run.status}`}>{statusLabel(run.status)}</span>
-
-        {progress.total > 0 && (
-          <>
-            <span className="small muted nowrap">
-              {progress.done}/{progress.total} 에폭
-            </span>
-            <div
-              className="progress"
-              style={{ maxWidth: 260 }}
-              role="progressbar"
-              aria-label="학습 진행률"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={percent}
-              aria-valuetext={`${progress.done}/${progress.total} 에폭, ${percent}%`}
-            >
-              <div style={{ width: `${percent}%` }} />
-            </div>
-            {progress.eta != null && run.status === 'running' && (
-              <span className="small muted nowrap">남은 시간 {formatDuration(progress.eta)}</span>
-            )}
-          </>
-        )}
+        <span className="run-sub">
+          {[dataset?.name, modelName(run), `GPU #${run.devices.join(', #')}`].filter(Boolean).join(' · ')}
+        </span>
 
         <span className="row tight spacer">
-          {run.status === 'running' && (
+          <StreamIndicator stream={stream} />
+          {running && (
             <>
-              <button className="btn-sm" onClick={() => onStop('graceful')}>
-                안전 정지
-              </button>
-              <button className="btn-sm danger" onClick={forceStop}>
+              <button onClick={() => onStop('graceful')}>안전 정지</button>
+              <button className="danger" onClick={forceStop}>
                 강제 종료
               </button>
             </>
           )}
-          {run.status === 'queued' && (
-            <button className="btn-sm" onClick={() => onStop('graceful')}>
-              대기 취소
-            </button>
-          )}
-          <StreamIndicator stream={stream} />
+          {run.status === 'queued' && <button onClick={() => onStop('graceful')}>대기 취소</button>}
         </span>
       </div>
 
-      <dl className="stat-row">
-        <Stat label="에폭" value={progress.total ? `${progress.done}/${progress.total}` : '-'} />
-        <Stat
-          label="최고 mAP50-95"
-          value={stats.bestValue == null ? '-' : stats.bestValue.toFixed(4)}
-          unit={stats.bestEpoch != null ? `${stats.bestEpoch}에폭` : undefined}
-        />
-        <Stat label="최근 손실" value={stats.loss == null ? '-' : stats.loss.toFixed(4)} />
-        <Stat label="경과 시간" value={stats.elapsed == null ? '-' : formatDuration(stats.elapsed)} />
-      </dl>
+      <div className="run-progress">
+        <div className="track">
+          <div className="row" style={{ alignItems: 'baseline' }}>
+            <span className="epoch-now">{progress.total ? progress.done : '-'}</span>
+            <span className="epoch-total">/ {progress.total || '-'} 에폭</span>
+            {progress.eta != null && running && (
+              <span className="small muted nowrap spacer">
+                남은 시간 <span className="mono">{clock(progress.eta)}</span> · 종료 예정{' '}
+                <span className="mono">{wallClock(progress.eta)}</span>
+              </span>
+            )}
+          </div>
+          <div
+            className="progress tall"
+            style={{ marginTop: 10 }}
+            role="progressbar"
+            aria-label="학습 진행률"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+            aria-valuetext={`${progress.done}/${progress.total} 에폭, ${percent}%`}
+          >
+            <div style={{ width: `${percent}%` }} />
+          </div>
+        </div>
+
+        <dl className="kpi-row">
+          <div className="kpi">
+            <dt>mAP50-95</dt>
+            <dd>
+              <span className="kpi-value">{kpi.map == null ? '-' : kpi.map.toFixed(3)}</span>
+              <Delta value={kpi.mapDelta} digits={3} higherIsBetter />
+              <span className="kpi-sub">
+                {kpi.bestValue == null
+                  ? '아직 없음'
+                  : `최고 ${kpi.bestValue.toFixed(4)}${kpi.bestEpoch != null ? ` · ${kpi.bestEpoch}에폭` : ''}`}
+              </span>
+            </dd>
+          </div>
+          <div className="kpi">
+            <dt>손실</dt>
+            <dd>
+              <span className="kpi-value">{kpi.loss == null ? '-' : kpi.loss.toFixed(3)}</span>
+              <Delta value={kpi.lossDelta} digits={3} higherIsBetter={false} />
+              <span className="kpi-sub">직전 에폭 대비</span>
+            </dd>
+          </div>
+        </dl>
+      </div>
 
       <Warnings stream={stream} />
 
@@ -136,6 +178,30 @@ export function RunHeader({ run, stream, onStop }: Props) {
           여기서 또 뿌리면 같은 문장이 두 번 나온다. */}
       {run.error && run.status !== 'failed' && <div className="error small">{run.error}</div>}
     </header>
+  )
+}
+
+/** 모델 경로는 길다. 파일 이름만 남긴다 — 어느 가중치로 돌았는지는 그것으로 안다. */
+function modelName(run: Run) {
+  const raw = run.params?.model
+  if (typeof raw !== 'string') return null
+  return raw.split(/[\\/]/).pop() || raw
+}
+
+/**
+ * 직전 에폭 대비 증감.
+ *
+ * 색은 방향이 아니라 좋고 나쁨을 뜻한다 — 손실은 내려가야 좋으므로 ▼ 가 초록이다.
+ * 방향으로 칠하면 두 지표가 정반대의 뜻을 같은 색으로 말하게 된다.
+ */
+function Delta({ value, digits, higherIsBetter }: { value: number | null; digits: number; higherIsBetter: boolean }) {
+  if (value == null || value === 0) return null
+  const up = value > 0
+  const good = up === higherIsBetter
+  return (
+    <span className={`kpi-delta ${good ? 'good' : 'bad'}`}>
+      {up ? '▲' : '▼'} {Math.abs(value).toFixed(digits)}
+    </span>
   )
 }
 
@@ -149,25 +215,16 @@ function Warnings({ stream }: { stream: StreamState }) {
   const warnings = stream.events.filter((e) => e.t === 'warning')
   if (!warnings.length) return null
   return (
-    <div className="stack" style={{ gap: 4 }}>
+    <div className="stack" style={{ gap: 'var(--sp-1)' }}>
       {warnings.map((w) => (
-        <div key={w.code ?? w.ts} className={`help ${w.severity === 'info' ? '' : 'warn'}`}>
-          <strong className={w.severity === 'critical' ? 'error' : undefined}>{w.message}</strong>
-          {w.hint && <span className="muted"> {w.hint}</span>}
+        <div key={w.code ?? w.ts} className={`run-warn${w.severity === 'critical' ? ' bad' : ''}`}>
+          <span className="dot" aria-hidden="true" />
+          <span>
+            <strong style={{ fontWeight: 600 }}>{w.message}</strong>
+            {w.hint && <span className="muted"> {w.hint}</span>}
+          </span>
         </div>
       ))}
-    </div>
-  )
-}
-
-function Stat({ label, value, unit }: { label: string; value: ReactNode; unit?: string }) {
-  return (
-    <div className="stat">
-      <dt>{label}</dt>
-      <dd>
-        {value}
-        {unit && <span className="unit">{unit}</span>}
-      </dd>
     </div>
   )
 }

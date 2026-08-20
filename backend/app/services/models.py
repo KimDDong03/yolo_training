@@ -8,13 +8,13 @@
 
 from __future__ import annotations
 
-import json
 import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from app.core.config import BASE_DIR, RUNS_DIR, WEIGHTS_DIR
+from app.services import run_summary
 
 WEIGHT_SUFFIXES = {".pt"}
 CONFIG_SUFFIXES = {".yaml", ".yml"}
@@ -152,29 +152,11 @@ def require(reference: str) -> str:
 
 
 def _best_metric(run_dir: Path) -> float | None:
-    """events.jsonl 의 마지막 end/epoch 이벤트에서 최고 mAP50-95 를 뽑는다."""
-    events = run_dir / "events.jsonl"
-    if not events.exists():
-        return None
-    best: float | None = None
-    try:
-        with open(events, "r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or '"epoch"' not in line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if obj.get("t") != "epoch":
-                    continue
-                value = (obj.get("summary") or {}).get("mAP50-95")
-                if isinstance(value, (int, float)) and (best is None or value > best):
-                    best = float(value)
-    except OSError:
-        return None
-    return best
+    """events.jsonl 의 epoch 이벤트에서 최고 mAP50-95 를 뽑는다.
+
+    사이드바 요약과 같은 계산이라 run_summary 가 한 벌만 든다. 캐시도 거기 붙어 있다.
+    """
+    return run_summary.summarize(run_dir)["best_map"]
 
 
 def candidates(limit_runs: int = 30) -> list[dict[str, Any]]:

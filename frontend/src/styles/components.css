@@ -7,12 +7,21 @@
   display: flex;
   align-items: center;
   gap: var(--sp-4);
-  padding: var(--sp-3) var(--sp-5);
+  height: 60px;
+  padding: 0 var(--sp-5);
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
-.header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+/* 점은 장식이라 마크업이 아니라 여기서 그린다. 스크린리더가 읽을 것이 없다. */
+.header h1 { display: flex; align-items: center; gap: var(--sp-2); margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.header h1::before { content: ''; width: 11px; height: 11px; border-radius: var(--r-full); background: var(--accent); }
+
+/* GPU 상태 — 숫자가 실시간으로 바뀌므로 자리가 흔들리지 않게 mono + tabular. */
+.gpu-strip { display: flex; align-items: center; gap: var(--sp-5); font-family: var(--mono); font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
+.gpu-strip > span { display: flex; align-items: center; gap: var(--sp-1); white-space: nowrap; }
+.meter { width: 62px; height: 5px; border-radius: var(--r-full); background: var(--panel-3); overflow: hidden; flex-shrink: 0; }
+.meter > div { height: 100%; background: var(--accent); transition: width 0.3s; }
 
 .body { display: flex; flex: 1; min-height: 0; }
 
@@ -21,7 +30,7 @@
 
 /* ── 사이드바 ─────────────────────────────────────────── */
 .sidebar {
-  width: 248px;
+  width: 276px;
   flex-shrink: 0;
   background: var(--panel);
   border-right: 1px solid var(--line);
@@ -29,12 +38,40 @@
   flex-direction: column;
   min-height: 0;
 }
-.sidebar.collapsed { width: 44px; }
-.sidebar-head { padding: var(--sp-3); border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: var(--sp-2); }
-.sidebar-scroll { flex: 1; overflow: auto; padding: var(--sp-2); }
+.sidebar-head { padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-2); }
+.sidebar-scroll { flex: 1; overflow: auto; padding: 0 var(--sp-2) var(--sp-3); }
 .sidebar-scroll ul { list-style: none; margin: 0; padding: 0; }
-.sidebar-section { font-size: var(--fs-sm); color: var(--muted); padding: var(--sp-3) var(--sp-2) var(--sp-1); }
-.sidebar-foot { border-top: 1px solid var(--line); padding: var(--sp-3); }
+.sidebar-foot { border-top: 1px solid var(--line); padding: var(--sp-3) var(--sp-2); display: flex; flex-direction: column; gap: 2px; }
+
+/* 구획 라벨. 목록을 "지금 도는 것" 과 "지나간 것" 으로 가르는 것이 이 화면의 요점이다. */
+.sidebar-section {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+  padding: var(--sp-4) var(--sp-2) var(--sp-1);
+}
+
+/* 현재 화면이 아닐 때는 투명하다. .primary 가 붙으면 styles.css 의 규칙이 덮어쓴다. */
+.sidebar-new { background: transparent; border-color: var(--line-strong); }
+
+.sidebar-search { position: relative; display: flex; align-items: center; }
+.sidebar-search .icon { position: absolute; left: 11px; width: 13px; height: 13px; color: var(--muted-2); pointer-events: none; }
+.sidebar-search input { padding-left: 32px; padding-right: 46px; }
+/* 단축키 안내. 클릭 대상이 아니라 포인터 이벤트를 뺀다 — 눌러도 입력에 포커스가 가야 한다. */
+.keycap {
+  position: absolute;
+  right: 8px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  background: var(--panel-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  padding: 2px 5px;
+  pointer-events: none;
+}
 
 .nav-item {
   display: flex;
@@ -49,14 +86,28 @@
   color: var(--text);
 }
 .nav-item:hover:not(:disabled) { background: var(--panel-2); border-color: transparent; }
-.nav-item[aria-current='page'] { background: var(--accent-weak); border-color: var(--accent); }
+.nav-item[aria-current='page'] { background: var(--panel-2); border-color: transparent; font-weight: 600; }
 
-.run-item { display: flex; align-items: flex-start; gap: var(--sp-2); border-radius: var(--r-row); padding: 2px var(--sp-1); }
+.run-item { display: flex; align-items: center; gap: var(--sp-1); border-radius: var(--r-row); padding: 2px; }
 .run-item:hover { background: var(--panel-2); }
+/* 도는 실행은 호버와 무관하게 늘 도드라진다. 목록에서 제일 먼저 눈에 띄어야 하는 줄이다. */
+.run-item.live, .run-item.current { background: var(--panel-2); }
 .run-item .nav-item { padding: var(--sp-2); }
 .run-item .nav-item:hover { background: transparent; }
-.run-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.run-meta { display: block; font-size: var(--fs-sm); color: var(--muted); margin-top: 2px; }
+.run-item .nav-item[aria-current='page'] { background: transparent; }
+.run-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-base); font-weight: 600; }
+.run-meta {
+  display: block;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--muted-2);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.run-meta .err { color: var(--err); }
 
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: var(--r-full); flex-shrink: 0; background: var(--muted); }
 .dot.running { background: var(--accent); }
@@ -121,13 +172,22 @@ td.diff { color: var(--accent); background: var(--accent-weak); }
 
 /* ── 배지 · 진행 ──────────────────────────────────────── */
 .badge {
-  padding: 2px var(--sp-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px var(--sp-2);
   border-radius: var(--r-full);
-  font-size: var(--fs-md);
-  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
   white-space: nowrap;
 }
-.badge.running { color: var(--accent); border-color: var(--accent); }
+.badge::before { content: ''; width: 5px; height: 5px; border-radius: var(--r-full); background: currentColor; }
+/* 도는 것만 배경을 채운다. 전부 채우면 지금 무엇이 도는지가 안 보인다. */
+.badge.running { color: var(--accent); border-color: transparent; background: var(--accent-weak); }
 .badge.completed { color: var(--ok); border-color: var(--ok); }
 .badge.failed { color: var(--err); border-color: var(--err); }
 .badge.stopped { color: var(--warn); border-color: var(--warn); }
@@ -135,44 +195,70 @@ td.diff { color: var(--accent); background: var(--accent-weak); }
 
 .progress { height: 6px; background: var(--panel-2); border-radius: var(--r-full); overflow: hidden; min-width: 120px; flex: 1; }
 .progress > div { height: 100%; background: var(--accent); transition: width 0.3s; }
-.progress.thin { height: 3px; min-width: 0; }
-
-/* ── 요약 스탯 ────────────────────────────────────────── */
-.stat-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; margin: 0; }
-.stat {
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-input);
-  padding: var(--sp-2) var(--sp-4);
-  min-width: 104px;
-}
-.stat dt { margin: 0; font-size: var(--fs-sm); color: var(--muted); }
-.stat dd { margin: 2px 0 0; font-size: var(--fs-xl); font-variant-numeric: tabular-nums; }
-.stat dd .unit { font-size: var(--fs-md); color: var(--muted); margin-left: 2px; }
+/* 사이드바의 도는 실행 줄에 붙는 얇은 진행바. */
+.progress.thin { height: 4px; min-width: 0; }
 
 /* ── run 헤더 ─────────────────────────────────────────── */
+/*
+ * 이 화면이 먼저 답해야 하는 것은 "지금 잘 되고 있나" 다. 그래서 동등한 크기의 stat 4개가
+ * 아니라 진행률과 지표 2개에 크기를 몰아준다. 나머지는 보조 줄로 내렸다.
+ */
 .run-header {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
-  padding: var(--sp-4) var(--sp-5);
+  gap: var(--sp-5);
+  padding: 26px var(--sp-6);
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
+.run-title { margin: 0; font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.03em; }
+.run-sub { font-family: var(--mono); font-size: var(--fs-sm); color: var(--muted-2); }
+
+.run-progress { display: flex; align-items: flex-start; gap: var(--sp-6); }
+.run-progress > .track { flex: 1; min-width: 140px; }
+.epoch-now { font-size: var(--fs-3xl); font-weight: 600; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.epoch-total { font-size: var(--fs-base); color: var(--muted); }
+.progress.tall { height: 8px; }
+
+/* 지표 두 개. 세로 구분선이 "진행" 과 "성적" 을 가른다. */
+.kpi-row { display: flex; margin: 0; }
+.kpi { border-left: 1px solid var(--line); padding-left: var(--sp-7); margin-left: var(--sp-7); }
+.kpi > dt { margin: 0; font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-2); }
+.kpi > dd { margin: var(--sp-1) 0 0; }
+.kpi-value { font-size: var(--fs-3xl); font-weight: 600; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+/* 좋아지는 방향은 지표마다 다르다 — 손실은 내려가는 것이 좋다. 색은 방향이 아니라 좋고 나쁨을 뜻한다. */
+.kpi-delta { font-size: var(--fs-md); margin-left: var(--sp-2); font-variant-numeric: tabular-nums; }
+.kpi-delta.good { color: var(--ok); }
+.kpi-delta.bad { color: var(--err); }
+.kpi-sub { display: block; margin-top: 3px; font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted-2); font-variant-numeric: tabular-nums; }
+
+.run-warn {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  background: var(--panel-2);
+  border-radius: var(--r-row);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+}
+.run-warn > .dot { width: 6px; height: 6px; background: var(--accent); }
+.run-warn.bad > .dot { background: var(--err); }
 
 /* ── 탭 ───────────────────────────────────────────────── */
-.tabs { display: flex; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4) 0; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.tabs { display: flex; align-items: stretch; gap: var(--sp-5); height: 48px; padding: 0 var(--sp-6); border-bottom: 1px solid var(--line); flex-shrink: 0; }
+/* 밑줄은 border 가 아니라 inset 그림자다 — border 를 쓰면 활성 탭만 1px 밀린다. */
 .tab {
-  padding: var(--sp-2) var(--sp-4);
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: var(--r-row) var(--r-row) 0 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
+  font-size: var(--fs-base);
 }
 .tab:hover:not(:disabled) { color: var(--text); border-color: transparent; }
-.tab[aria-selected='true'] { background: var(--panel); border-color: var(--line); color: var(--text); }
+.tab[aria-selected='true'] { color: var(--text); font-weight: 600; box-shadow: inset 0 -2px 0 0 var(--accent); }
 
 /* ── 세그먼트 (라디오·토글 묶음) ───────────────────────── */
 .segmented {

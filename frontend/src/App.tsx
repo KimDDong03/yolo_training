@@ -46,9 +46,10 @@ export default function App() {
     setView((v) => (v.kind === 'run' && !ids.has(v.id) ? { kind: 'new' } : v))
   }, [runs.status, runs.data])
 
-  useEffect(() => {
-    setView((v) => (v.kind === 'compare' && compare.length === 0 ? { kind: 'new' } : v))
-  }, [compare.length])
+  /*
+   * 비교는 이제 사이드바 하단에서 직접 들어가는 화면이다. 체크박스도 이 화면에서만 나오므로
+   * 고른 것이 없다고 화면을 튕기면 고를 방법 자체가 사라진다. 빈 상태는 CompareView 가 맡는다.
+   */
 
   // 상세(dataset 포함)는 목록에 없는 정보다. 상태가 바뀔 때마다 다시 받는다.
   // run 을 빠르게 옮겨 다니면 이전 run 의 응답이 늦게 도착할 수 있어 취소 플래그를 둔다.
@@ -104,14 +105,18 @@ export default function App() {
     <div className="app">
       <header className="header">
         <h1>YOLO 학습 콘솔</h1>
-        <span className="small muted mono spacer">
-          {gpus.data
-            .map(
-              (g) =>
-                `#${g.index} ${g.utilization}% ${Math.round(g.memory_used_mb / 1024)}/${Math.round(g.memory_total_mb / 1024)}GB`,
-            )
-            .join('  ')}
-        </span>
+        <div className="gpu-strip spacer">
+          {gpus.data.map((g) => (
+            <span key={g.index}>
+              GPU{g.index}
+              {/* 막대는 숫자를 대신하지 않고 옆에 붙는다 — 몇 %인지는 숫자가 답한다. */}
+              <span className="meter" aria-hidden="true">
+                <div style={{ width: `${Math.min(100, g.utilization)}%` }} />
+              </span>
+              {g.utilization}% {Math.round(g.memory_used_mb / 1024)}/{Math.round(g.memory_total_mb / 1024)}GB
+            </span>
+          ))}
+        </div>
       </header>
 
       {offline && (
@@ -140,7 +145,9 @@ export default function App() {
         />
 
         <main className="main">
-          {view.kind === 'run' && current && <RunHeader run={current} stream={stream} onStop={stop} />}
+          {view.kind === 'run' && current && (
+            <RunHeader run={current} dataset={detail?.dataset} stream={stream} onStop={stop} />
+          )}
           {view.kind === 'run' && current?.status === 'failed' && (
             <FailureCard
               run={current}

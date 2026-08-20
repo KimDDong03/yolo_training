@@ -173,6 +173,18 @@ export interface Run {
   started_at: number | null
   finished_at: number | null
   dataset?: Dataset | null
+  /**
+   * 목록에서 바로 진행률과 최고 mAP 를 보여주기 위한 한 줄 요약.
+   * `GET /api/runs` 에만 실린다 — 상세(`GET /api/runs/{id}`)에는 없다.
+   */
+  summary?: RunSummary
+}
+
+/** 서버가 events.jsonl 에서 뽑아 준다. 읽지 못했으면 전부 null 이다. */
+export interface RunSummary {
+  epoch: number | null
+  total_epochs: number | null
+  best_map: number | null
 }
 
 /** 재시도할 때 바뀌는 값 하나. */

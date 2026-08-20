@@ -433,7 +433,12 @@ export function DiagnosePanel({ run, dataset }: { run: Run; dataset?: Dataset | 
         className="dialog lightbox"
         label="확대한 이미지"
       >
-        {zoom && <img src={zoom} alt="확대한 사진" />}
+        {zoom && (
+          <>
+            <img src={zoom} alt="확대한 사진" />
+            <span className="lightbox-cap">{decodeURIComponent(zoom.split('/').pop() ?? '')} · 클릭하면 닫힙니다</span>
+          </>
+        )}
       </Modal>
     </div>
   )

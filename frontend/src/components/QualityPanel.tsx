@@ -278,6 +278,7 @@ export function QualityPanel({ dataset }: { dataset: Dataset | null | undefined 
             onClick={() => setZoom(null)}
           >
             <img src={zoom} alt="확대한 이미지" />
+            <span className="lightbox-cap">{decodeURIComponent(zoom.split('/').pop() ?? '')} · 클릭하면 닫힙니다</span>
           </button>
         )}
       </Modal>

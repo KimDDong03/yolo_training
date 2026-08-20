@@ -378,8 +378,9 @@ td.diff { color: var(--accent); background: var(--accent-weak); }
 
 /* ── 빈 상태 · 스켈레톤 ───────────────────────────────── */
 .empty { text-align: center; padding: var(--sp-6) var(--sp-5); color: var(--muted); }
-.empty h4 { margin: 0 0 var(--sp-2); font-size: var(--fs-lg); font-weight: 600; color: var(--text); }
-.empty p { margin: 0 0 var(--sp-4); font-size: var(--fs-md); line-height: 1.5; }
+.empty h4 { margin: 0 0 var(--sp-2); font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.02em; color: var(--text); }
+/* 설명은 한 줄로 길게 흐르지 않게 묶는다 — 빈 화면일수록 줄이 화면 끝까지 늘어난다. */
+.empty p { max-width: 44ch; margin: 0 auto var(--sp-4); font-size: var(--fs-base); line-height: 1.7; }
 
 .skeleton {
   background: linear-gradient(90deg, var(--panel-2) 25%, var(--panel-3) 50%, var(--panel-2) 75%);
@@ -598,3 +599,54 @@ fieldset.group > .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 
 /* 기본값에서 벗어난 필드. 46개를 훑을 때 무엇을 건드렸는지가 먼저 보여야 한다. */
 .field-changed { background: var(--panel-2); border: 1px solid var(--accent); border-radius: var(--r-row); padding: var(--sp-3); margin: calc(var(--sp-3) * -1); }
 .changed-tag { float: right; font-family: var(--mono); font-size: var(--fs-xs); color: var(--accent); }
+
+/* lightbox 캡션 — 무엇을 보고 있는지와 닫는 법. */
+.lightbox-cap { display: block; margin-top: var(--sp-3); text-align: center; font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); }
+
+/* ── 좁은 화면 ────────────────────────────────────────── */
+/*
+ * 두 구간뿐이다. 1120 미만은 시안이 없어 규칙만 따랐다 — 세로로 쌓고 사이드바를 레일로 접는다.
+ * 로그 접힘 기본값은 CSS 가 아니라 상태라서 LogView 가 matchMedia 로 직접 정한다.
+ */
+@media (max-width: 1439px) {
+  .sidebar { width: 220px; }
+  /* 이 폭에서는 이름과 진행 숫자가 먼저다. 진행바까지 넣으면 줄이 두 겹으로 접힌다. */
+  .run-item .progress { display: none; }
+  .new-run-scroll { padding: var(--sp-6) var(--sp-6) 0; }
+  .new-run-foot { padding: var(--sp-4) var(--sp-6); }
+  .goal { padding: var(--sp-4); }
+  .goal-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .diag-grid { grid-template-columns: 1fr 340px; }
+  .run-header { padding: var(--sp-5) var(--sp-6); }
+  .kpi { padding-left: var(--sp-6); margin-left: var(--sp-6); }
+}
+
+@media (max-width: 1119px) {
+  /*
+   * 아이콘 레일. 호버로 펼치되 펼친 폭이 본문을 밀지 않도록 띄운다 —
+   * 밀면 폭이 바뀔 때마다 아래 그리드가 전부 다시 계산돼 화면이 출렁인다.
+   */
+  .sidebar { width: 60px; overflow: visible; }
+  .sidebar:hover, .sidebar:focus-within { width: 276px; position: relative; z-index: var(--z-sticky); box-shadow: var(--shadow-1); }
+  .sidebar:not(:hover):not(:focus-within) .sidebar-search,
+  .sidebar:not(:hover):not(:focus-within) .sidebar-section,
+  .sidebar:not(:hover):not(:focus-within) .run-meta,
+  .sidebar:not(:hover):not(:focus-within) .run-item > button:last-child,
+  .sidebar:not(:hover):not(:focus-within) .nav-item > span:last-child { display: none; }
+  .sidebar:not(:hover):not(:focus-within) .run-name { display: none; }
+  .sidebar:not(:hover):not(:focus-within) .sidebar-head { padding: var(--sp-2); }
+  .sidebar:not(:hover):not(:focus-within) .sidebar-new { font-size: 0; padding: 0; }
+  .sidebar:not(:hover):not(:focus-within) .sidebar-new::before { content: '＋'; font-size: var(--fs-xl); }
+
+  /* 실행 상세는 세로로 쌓는다 — 예측이 위, 지표가 아래. 좌우로 나누면 둘 다 못 읽는다. */
+  .split { flex-direction: column; }
+  .split > .split-pane { width: auto !important; flex: none; }
+  .splitter { display: none; }
+
+  .goal-grid { grid-template-columns: 1fr; }
+  .goal-desc { white-space: normal; }
+  fieldset.group > .grid { grid-template-columns: minmax(0, 1fr); gap: var(--sp-5); }
+  .tune-inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .diag-grid, .compare-grid, .infer-grid { grid-template-columns: minmax(0, 1fr); }
+  .gpu-grid { grid-template-columns: minmax(0, 1fr); }
+}

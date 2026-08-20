@@ -100,9 +100,12 @@ export function SplitPane({
         onPointerCancel={() => setDragging(false)}
         onLostPointerCapture={() => setDragging(false)}
       />
-      <div className="split-pane" style={{ flex: 1 }}>
-        {right}
-      </div>
+      {/*
+        flex 를 인라인으로 주지 않는다 — 좁은 화면에서 세로로 쌓을 때 CSS 가 이 값을 덮어야
+        하는데 인라인은 못 덮는다. 실제로 그것 때문에 아래 패널 높이가 0 이 됐었다.
+        왼쪽의 width 는 드래그로 바뀌는 값이라 인라인으로 남는다.
+      */}
+      <div className="split-pane">{right}</div>
     </div>
   )
 }

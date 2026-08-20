@@ -39,7 +39,9 @@
   min-height: 0;
 }
 .sidebar-head { padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-2); }
-.sidebar-scroll { flex: 1; overflow: auto; padding: 0 var(--sp-2) var(--sp-3); }
+/* 세로로만 스크롤한다. 좁은 폭(220)에서 7px 이 넘쳐 가로 스크롤바가 생겼다 —
+   이름은 이미 말줄임이라 가로로 밀어 볼 것이 없다. */
+.sidebar-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 var(--sp-2) var(--sp-3); }
 .sidebar-scroll ul { list-style: none; margin: 0; padding: 0; }
 .sidebar-foot { border-top: 1px solid var(--line); padding: var(--sp-3) var(--sp-2); display: flex; flex-direction: column; gap: 2px; }
 /* 아이콘은 아이콘 레일에서만 쓴다. 넓을 때는 라벨이 이름을 말하므로 필요 없다. */
@@ -140,6 +142,8 @@
 .split { display: flex; flex: 1; min-height: 0; }
 .split.dragging { user-select: none; cursor: col-resize; }
 .split > .split-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* 왼쪽은 인라인 width(드래그 값)로 정해지고, 오른쪽이 남는 자리를 가져간다. */
+.split > .split-pane:last-child { flex: 1; }
 
 .splitter {
   width: 7px;
@@ -672,9 +676,18 @@ fieldset.group > .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 
   .sidebar:not(:hover):not(:focus-within) .sidebar-new { font-size: 0; padding: 0; }
   .sidebar:not(:hover):not(:focus-within) .sidebar-new::before { content: '＋'; font-size: var(--fs-xl); }
 
-  /* 실행 상세는 세로로 쌓는다 — 예측이 위, 지표가 아래. 좌우로 나누면 둘 다 못 읽는다. */
-  .split { flex-direction: column; }
-  .split > .split-pane { width: auto !important; flex: none; }
+  /*
+   * 실행 상세는 세로로 쌓는다 — 예측이 위, 지표가 아래. 좌우로 나누면 둘 다 못 읽는다.
+   *
+   * 스크롤을 .split 이 가져가는 것이 요점이다. 가로 분할일 때는 두 패널이 각자 스크롤하는데,
+   * 세로로 쌓으면 높이가 정해진 .split 안에서 위 패널이 높이를 다 먹고 아래 패널이 0 이 된다
+   * (실제로 그랬다 — 차트와 로그가 통째로 잘려 나갔다). 둘 다 내용 높이로 두고 바깥이 스크롤한다.
+   */
+  .split { flex-direction: column; overflow: auto; }
+  /* :last-child 까지 적어야 한다 — 위의 `.split > .split-pane:last-child { flex: 1 }` 이 더 구체적이다. */
+  .split > .split-pane,
+  .split > .split-pane:last-child { width: auto !important; flex: none; height: auto; }
+  .split > .split-pane > .pane { flex: none; overflow: visible; }
   .splitter { display: none; }
 
   .goal-grid { grid-template-columns: 1fr; }

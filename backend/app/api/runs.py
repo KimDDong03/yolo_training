@@ -55,9 +55,29 @@ def list_runs() -> list[dict[str, Any]]:
     return runs
 
 
+def _source_model(run_id: str) -> str | None:
+    """사용자가 고른 원본 가중치 경로. 못 읽으면 None.
+
+    `params["model"]` 은 run 폴더 안의 복사본이라 run 마다 다르다
+    (run_manager.py:105 — 큐에서 대기하는 동안 원본이 사라져도 안전하도록 복사한다).
+    그래서 같은 가중치로 시작한 실행끼리도 params 만 보면 서로 달라 보인다.
+    비교 화면이 "무엇이 달랐나" 를 물을 때 그 차이는 잡음이다.
+
+    파일 이름으로 비교하는 것으로는 부족하다 — 서로 다른 실행에서 이어받은 best.pt 두 개는
+    이름이 같지만 실제로 다른 가중치다. 원본 경로가 있어야 그 둘을 가른다.
+    """
+    try:
+        text = (run_manager.run_dir_for(run_id) / "config.json").read_text(encoding="utf-8")
+        value = json.loads(text).get("source_model")
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, str) else None
+
+
 @router.get("/{run_id}")
 def get_run(run_id: str) -> dict[str, Any]:
     run = _run_or_404(run_id)
+    run["source_model"] = _source_model(run_id)
     dataset = db.query_one("SELECT * FROM datasets WHERE id = ?", (run["dataset_id"],))
     if dataset is None:
         run["dataset"] = None
@@ -70,8 +90,31 @@ def get_run(run_id: str) -> dict[str, Any]:
     return run
 
 
-@router.post("")
-def create_run(payload: dict[str, Any]) -> dict[str, Any]:
+class _Common:
+    """생성 계열 엔드포인트가 공유하는 검증 결과.
+
+    단일 생성과 스윕이 같은 계약을 두 벌로 갖지 않게 한 곳에서 만든다.
+    effective 를 함께 내는 이유는 `params` 가 폼이 보낸 키만 담기 때문이다 —
+    기본값 병합은 원래 run_manager.create_run 이 하므로, 그 전에 model 같은 값을
+    보려는 호출자(스윕)는 여기서 병합된 것을 받아야 KeyError 를 만나지 않는다.
+    """
+
+    def __init__(
+        self,
+        dataset: dict[str, Any],
+        params: dict[str, Any],
+        options: dict[str, Any],
+        devices: list[int],
+        effective: dict[str, Any],
+    ) -> None:
+        self.dataset = dataset
+        self.params = params
+        self.options = options
+        self.devices = devices
+        self.effective = effective
+
+
+def _validate_common(payload: dict[str, Any]) -> _Common:
     dataset_row = db.query_one(
         "SELECT * FROM datasets WHERE id = ?", (payload.get("dataset_id"),)
     )
@@ -105,6 +148,109 @@ def create_run(payload: dict[str, Any]) -> dict[str, Any]:
     if unknown:
         raise HTTPException(422, f"존재하지 않는 GPU 번호입니다: {unknown}")
 
+    effective = {**param_schema.defaults_dict("params"), **params}
+    return _Common(db.row_to_dataset(dataset_row), params, options, devices, effective)
+
+
+# 스윕이 만들 수 있는 run 수의 상한.
+#
+# 6 인 이유는 임의가 아니다 — 프론트의 COMPARE_LIMIT(Sidebar.tsx)와 같은 값이다.
+# 스윕의 결과는 비교 화면에 통째로 들어가야 의미가 있고, 비교 화면은 run 마다 상세와
+# 전체 이벤트를 병렬로 받으므로 그 상한이 곧 이 상한이다. 한쪽만 바꾸면 스윕 직후
+# 비교가 잘린다.
+SWEEP_MAX = 6
+
+
+def _sweep_axis(payload: dict[str, Any], effective: dict[str, Any]) -> dict[str, Any]:
+    """훑을 축 하나를 고르고 그것이 훑을 수 있는 축인지 본다."""
+    axis = payload.get("axis")
+    if not isinstance(axis, str):
+        raise HTTPException(422, "axis 는 파라미터 이름이어야 합니다.")
+    field = param_schema.field_index().get(axis)
+    if field is None or field["scope"] != "params":
+        raise HTTPException(422, f"훑을 수 없는 항목입니다: {axis}")
+    if field["type"] == "bool":
+        # 값이 참/거짓 둘뿐이라 "여러 값을 훑는다" 가 성립하지 않는다.
+        raise HTTPException(422, f"{field['label']} 은 참/거짓이라 훑을 수 없습니다.")
+    if axis == "epochs" and float(effective.get("time") or 0) > 0:
+        # 시간 예산이 켜져 있으면 ultralytics 가 매 에폭 끝에서 에폭 수를 예산에 맞춰
+        # 다시 계산한다(engine/trainer.py:546). 그래서 서로 다른 에폭 수로 넣어도
+        # 전부 같은 실행이 된다. 다르게 돌 수 없는 것은 실험이 아니다.
+        raise HTTPException(
+            422,
+            "시간 예산이 켜져 있으면 에폭 수를 훑을 수 없습니다. "
+            "예산이 에폭 수를 덮어써서 모든 실행이 같아집니다.",
+        )
+    return field
+
+
+@router.post("/sweep")
+def create_sweep(payload: dict[str, Any]) -> dict[str, Any]:
+    """한 축을 여러 값으로 바꾼 run 을 한 번에 큐에 넣는다.
+
+    **검증을 전부 끝낸 뒤에 만든다.** 클라이언트가 POST /api/runs 를 N번 부르면
+    네 번째 값이 범위를 벗어날 때 앞의 세 개가 이미 만들어져 절반짜리 스윕이 남는다.
+
+    보장하는 것은 "요청 검증이 실패하면 run 이 0개" 까지다. 만드는 도중 디스크가 차는
+    것까지 되돌리지는 않는다 — create_run 이 폴더·복사·DB 를 개별로 커밋하고,
+    스케줄러가 1초마다 독립적으로 돌아 뒤를 만드는 동안 앞이 이미 시작될 수 있다.
+    """
+    common = _validate_common(payload)
+    field = _sweep_axis(payload, common.effective)
+    axis = str(payload.get("axis"))
+
+    values = payload.get("values")
+    if not isinstance(values, list):
+        raise HTTPException(422, "values 는 배열이어야 합니다.")
+    if not 2 <= len(values) <= SWEEP_MAX:
+        raise HTTPException(422, f"훑을 값은 2개 이상 {SWEEP_MAX}개 이하여야 합니다.")
+
+    # 값마다 완전한 설정을 만들어 둔다. 여기서 하나라도 걸리면 아무것도 만들지 않는다.
+    configs: list[tuple[Any, dict[str, Any]]] = []
+    for value in values:
+        try:
+            cfg = param_schema.validate({**common.effective, axis: value}, "params")
+        except param_schema.ValidationError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        configs.append((cfg[axis], cfg))
+
+    seen = [c[0] for c in configs]
+    if len(seen) != len(set(seen)):
+        # 320 과 "320" 은 검증을 지나면 같은 값이 된다(_coerce 가 축 타입으로 바꾼다).
+        # 그래서 여기서는 문자열이 아니라 값 자체로 비교한다 — str() 로 비교하면
+        # -0.0 과 0.0 이 서로 다른 문자열이라 같은 실행을 두 번 큐에 넣는다.
+        raise HTTPException(422, "같은 값을 두 번 훑을 수 없습니다.")
+
+    # 모델은 값마다 다를 수 있다(axis 가 model 인 스윕). create_run 안에서 늦게
+    # 터지면 앞의 run 이 남으므로 여기서 전부 먼저 해석한다.
+    for _, cfg in configs:
+        try:
+            models.require(str(cfg.get("model", "")))
+        except models.ModelError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    dataset = common.dataset
+    base = str(payload.get("name") or dataset["name"])
+    runs: list[dict[str, Any]] = []
+    for value, cfg in configs:
+        # 이름에 축과 값을 박는다. 사이드바에서 같은 접두어로 모여 보이고,
+        # 비교 화면의 "다른 설정만" 표와 눈으로 대조할 수 있다.
+        name = f"{base}/{axis}={value}"
+        try:
+            runs.append(
+                run_manager.create_run(name, dataset, cfg, common.options, common.devices)
+            )
+        except models.ModelError as exc:  # 위에서 걸렀지만 파일이 그 사이 사라질 수 있다
+            raise HTTPException(422, str(exc)) from exc
+    run_manager.schedule()
+    return {"runs": runs, "axis": axis, "label": field["label"]}
+
+
+@router.post("")
+def create_run(payload: dict[str, Any]) -> dict[str, Any]:
+    common = _validate_common(payload)
+    params, options, devices = common.params, common.options, common.devices
+
     retry_of = payload.get("retry_of")
     if retry_of is not None:
         if not isinstance(retry_of, str):
@@ -112,7 +258,7 @@ def create_run(payload: dict[str, Any]) -> dict[str, Any]:
         if db.query_one("SELECT id FROM runs WHERE id = ?", (retry_of,)) is None:
             raise HTTPException(422, "재시도할 원본 실행을 찾을 수 없습니다.")
 
-    dataset = db.row_to_dataset(dataset_row)
+    dataset = common.dataset
     name = str(payload.get("name") or f"{dataset['name']}")
     try:
         run = run_manager.create_run(name, dataset, params, options, devices, retry_of)

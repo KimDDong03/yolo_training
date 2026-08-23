@@ -319,6 +319,15 @@ def estimate(
     ratio, samples, source, same_scale = _calibration(scale, on_gpu)
     epoch_seconds = analytic_epoch_seconds(images, imgsz, scale, amp, on_gpu) * ratio
     total_seconds = epoch_seconds * max(epochs, 1)
+
+    # 시간 예산이 켜져 있으면 길이를 정하는 것은 에폭 수가 아니라 예산이다.
+    # ultralytics 가 매 에폭 끝에서 남은 예산으로 에폭 수를 다시 계산한다
+    # (engine/trainer.py:546). 이걸 반영하지 않으면 30분 예산 실행에 4시간이라고 답한다.
+    # 에폭을 다 돌아 예산보다 먼저 끝나는 경우(데이터셋이 작을 때)는 상한이 걸리지 않는다.
+    budget_s = float(params.get("time") or 0.0) * 3600.0
+    capped = budget_s > 0 and total_seconds > budget_s
+    if capped:
+        total_seconds = budget_s
     vram = round(analytic_vram_gb(batch, imgsz, scale, amp), 2) if on_gpu else None
 
     device_label = f"GPU {devices[0]}" if on_gpu else "CPU"
@@ -351,6 +360,15 @@ def estimate(
         )
         spread = (0.4, 2.5)
     assumptions.append("검증(val) 시간과 첫 에폭 웜업이 포함된 값입니다.")
+    if capped:
+        # 예산은 학습 루프의 상한이지 총 소요시간의 상한이 아니다. 시간 검사가
+        # 배치 단위로만 돌기 때문에(trainer.py:474) 걸린 에폭의 남은 검증과
+        # 마지막 정리가 뒤에 더 붙는다. 그 초과분을 1에폭 이내로 보고 범위에 반영한다.
+        assumptions.append(
+            f"시간 예산 {params.get('time')}시간이 켜져 있어 에폭 수 {epochs} 대신 "
+            f"예산이 길이를 정합니다. 마지막 에폭의 검증과 마무리가 뒤에 더 붙으므로 "
+            f"실제 소요는 예산을 조금 넘습니다. 조기 종료가 먼저 걸리면 더 짧아집니다."
+        )
 
     warnings: list[dict[str, Any]] = []
     level = "ok"
@@ -380,7 +398,11 @@ def estimate(
         "ok": True,
         "epoch_time_s": round(epoch_seconds, 1),
         "total_time_s": round(total_seconds, 1),
-        "range_s": [round(total_seconds * spread[0]), round(total_seconds * spread[1])],
+        "range_s": (
+            [round(total_seconds), round(total_seconds + epoch_seconds)]
+            if capped
+            else [round(total_seconds * spread[0]), round(total_seconds * spread[1])]
+        ),
         "batch_effective": batch,
         "vram_gb": vram,
         "vram_total_gb": total_vram,

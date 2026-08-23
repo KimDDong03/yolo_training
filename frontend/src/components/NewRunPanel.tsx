@@ -23,6 +23,14 @@ const MODE_KEY = 'yolo.newrun.mode'
  * 시안의 960 은 그 데이터셋에서 서버가 낸 값이지 상수가 아니다. 추천이 없으면 스키마
  * 기본값을 쓰고 강조하지 않는다(강조는 "검수 때문에 바뀐 값" 이라는 뜻이라서).
  */
+/**
+ * 한 번에 훑을 수 있는 값의 개수.
+ *
+ * 백엔드의 runs.py SWEEP_MAX 와 Sidebar 의 COMPARE_LIMIT 과 **같은 값이어야 한다** -
+ * 스윕 결과는 비교 화면에 통째로 들어가야 의미가 있다. 셋 중 하나만 바꾸면 어긋난다.
+ */
+const SWEEP_MAX = 6
+
 const GOALS: { key: GoalKey; title: string; tag?: string; desc: string; patch: Record<string, number> }[] = [
   { key: 'quick', title: '빠른 확인', desc: '파이프라인이 도는지 먼저 본다', patch: { epochs: 3, imgsz: 320, batch: 8 } },
   // imgsz 0 은 자리표시자다. 아래 goalPatch 가 추천값으로 바꿔 넣는다 — 키 순서를 지키려고 여기 둔다.
@@ -47,6 +55,8 @@ interface Props {
   onRetryGpus: () => void
   onRegisterDataset: () => void
   onStarted: (runId: string) => void
+  /** 스윕이 만든 run 들. 곧바로 비교 화면으로 보낸다. */
+  onSweepStarted: (runIds: string[]) => void
 }
 
 export function NewRunPanel({
@@ -58,6 +68,7 @@ export function NewRunPanel({
   onRetryGpus,
   onRegisterDataset,
   onStarted,
+  onSweepStarted,
 }: Props) {
   const [schema, setSchema] = useState<ParamSchema | null>(null)
   const [presets, setPresets] = useState<Preset[]>([])
@@ -171,6 +182,38 @@ export function NewRunPanel({
   )
 
   const goalTimes = useGoalTimes(dataset, devices, values, goalPatch, schema)
+  // 간편 모드에도 시간 예산을 내보낸다. 파라미터 폼 전체가 전문 모드 안에만 있어서
+  // 이대로 두면 이 기능이 겨냥한 사용자가 볼 수 없다. 정의는 스키마에서 읽는다.
+  const timeField = schema?.fields.find((f) => f.key === 'time')
+
+  const [sweepOn, setSweepOn] = useState(false)
+  const [sweepAxis, setSweepAxis] = useState('imgsz')
+  const [sweepText, setSweepText] = useState('')
+
+  const budgetOn = Number(values['time'] ?? 0) > 0
+  /*
+   * 훑을 수 있는 축. bool 은 값이 둘뿐이라 스윕이랄 게 없고, 예산이 켜져 있으면
+   * epochs 는 ultralytics 가 덮어써서(trainer.py:546) 모든 실행이 같아진다.
+   * 서버도 같은 규칙으로 거절하지만(POST /api/runs/sweep) 고를 수 없게 먼저 막는다.
+   */
+  const sweepAxes = useMemo(
+    () =>
+      (schema?.fields ?? []).filter(
+        (f) =>
+          f.scope === 'params' &&
+          f.type !== 'bool' &&
+          !(f.key === 'epochs' && budgetOn),
+      ),
+    [schema, budgetOn],
+  )
+  const axisField = sweepAxes.find((f) => f.key === sweepAxis) ?? sweepAxes[0]
+  const sweepValues = useMemo(
+    () => parseSweepValues(sweepText, axisField),
+    [sweepText, axisField],
+  )
+  const sweepTimes = useSweepTimes(
+    dataset, devices, values, schema, sweepOn ? axisField : undefined, sweepValues.ok,
+  )
 
   /*
    * 추천은 늦게 온다. 그 전에 균형을 고르면 카드에는 추천 imgsz 가 뜨는데 폼에는 기본값이
@@ -231,6 +274,29 @@ export function NewRunPanel({
     () => (schema?.fields ?? []).filter((f) => values[f.key] !== f.default).length,
     [schema, values],
   )
+
+  async function startSweep() {
+    if (!dataset || !schema || !axisField) return
+    setBusy(true)
+    setError('')
+    try {
+      const { params, options } = scopedValues()
+      const out = await api.createSweep({
+        dataset_id: dataset.id,
+        name: runName || dataset.name,
+        devices,
+        params,
+        options,
+        axis: axisField.key,
+        values: sweepValues.ok,
+      })
+      onSweepStarted(out.runs.map((r) => r.id))
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function start() {
     if (!dataset || !schema) return
@@ -433,6 +499,94 @@ export function NewRunPanel({
                 </button>
               ))}
             </div>
+
+            {/*
+              에폭이 아니라 시간으로 끊고 싶을 때. 카드와 배타가 아니라 위에 얹는 것이라
+              카드의 patch 는 그대로 두고 여기서 값만 더한다 - 0 이면 꺼진 상태다.
+            */}
+            {timeField && (
+              <div className="budget-row">
+                <ParamFieldControl
+                  field={timeField}
+                  value={values[timeField.key]}
+                  changed={values[timeField.key] !== timeField.default}
+                  onChange={(v) => applyValues({ [timeField.key]: v }, { kind: 'manual' })}
+                />
+              </div>
+            )}
+
+            {/*
+              한 축을 여러 값으로 훑는다. 축 정의는 스키마에서 읽고(param_schema.py:3 방침)
+              만들어질 run 을 먼저 보여 준다 - 밤새 도는 일이라 누르기 전에 총 시간을 봐야 한다.
+            */}
+            {schema && axisField && (
+              <div className="budget-row sweep-row">
+                <label className="row tight">
+                  <input type="checkbox" checked={sweepOn} onChange={(e) => setSweepOn(e.target.checked)} />
+                  <span>한 축을 여러 값으로 훑기</span>
+                </label>
+
+                {sweepOn && (
+                  <div className="sweep-body">
+                    <div className="row tight">
+                      <select
+                        aria-label="훑을 항목"
+                        value={axisField.key}
+                        onChange={(e) => setSweepAxis(e.target.value)}
+                      >
+                        {sweepAxes.map((f) => (
+                          <option key={f.key} value={f.key}>
+                            {f.label} ({f.key})
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        aria-label="훑을 값"
+                        className="spacer"
+                        spellCheck={false}
+                        placeholder={axisField.type === 'enum' ? 'SGD, AdamW' : '320, 416, 512'}
+                        value={sweepText}
+                        onChange={(e) => setSweepText(e.target.value)}
+                      />
+                    </div>
+
+                    {sweepValues.error && <p className="small error">{sweepValues.error}</p>}
+
+                    {sweepValues.ok.length > 0 && (
+                      <ul className="sweep-preview">
+                        {sweepValues.ok.map((v, i) => (
+                          <li key={String(v)}>
+                            <span className="chip" aria-hidden="true">{String(v)}</span>
+                            <span className="mono small muted">
+                              {(runName || dataset?.name || '')}/{axisField.key}={String(v)}
+                            </span>
+                            <span className="small muted spacer nowrap">
+                              {sweepTimes[i] == null ? '계산 중…' : `약 ${formatDuration(sweepTimes[i]!)}`}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {sweepValues.ok.length > 0 && (
+                      <p className="small muted">
+                        {sweepTimes.every((t) => t != null)
+                          ? `전부 합쳐 약 ${formatDuration(sweepTimes.reduce((a, b) => a + (b ?? 0), 0))}`
+                          : '합계를 계산하는 중입니다'}
+                        {!budgetOn && (
+                          <>
+                            {' · '}
+                            <strong>시간 예산이 꺼져 있어 값마다 소요가 다릅니다.</strong> 같은 비용에서
+                            비교하려면 위에서 예산을 켜세요.
+                          </>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           <section className="section">
@@ -700,14 +854,124 @@ export function NewRunPanel({
         <button
           className="primary nowrap"
           style={{ fontSize: 15, padding: '0 36px' }}
-          disabled={busy || blockedReason !== null}
-          onClick={start}
+          disabled={busy || blockedReason !== null || (sweepOn && sweepValues.ok.length < 2)}
+          onClick={sweepOn ? startSweep : start}
         >
-          {busy ? '시작하는 중…' : '학습 시작'}
+          {busy
+            ? '시작하는 중…'
+            : sweepOn
+              ? `스윕 시작 (${sweepValues.ok.length}개)`
+              : '학습 시작'}
         </button>
       </div>
     </div>
   )
+}
+
+/**
+ * 쉼표로 구분한 입력을 축 타입에 맞는 값으로 바꾼다.
+ *
+ * 여기 검증은 UX 다 - 진짜 관문은 서버의 param_schema.validate 다(param_schema.py:250).
+ * 그래도 min/max 를 먼저 보는 이유는, 값 하나가 범위를 벗어나면 서버가 스윕 전체를
+ * 422 로 거절하기 때문이다. 누르고 나서 알면 늦다.
+ */
+function parseSweepValues(
+  text: string,
+  field: ParamField | undefined,
+): { ok: unknown[]; error: string } {
+  if (!field) return { ok: [], error: '' }
+  const parts = text.split(',').map((t) => t.trim()).filter(Boolean)
+  if (parts.length === 0) return { ok: [], error: '' }
+
+  const ok: unknown[] = []
+  for (const part of parts) {
+    if (field.type === 'int' || field.type === 'float') {
+      const n = field.type === 'int' ? Number.parseInt(part, 10) : Number.parseFloat(part)
+      if (!Number.isFinite(n)) return { ok: [], error: `숫자로 읽을 수 없습니다: ${part}` }
+      if (field.min != null && n < field.min)
+        return { ok: [], error: `${part} 은 최소값 ${field.min} 보다 작습니다.` }
+      if (field.max != null && n > field.max)
+        return { ok: [], error: `${part} 은 최대값 ${field.max} 보다 큽니다.` }
+      ok.push(n)
+    } else if (field.type === 'enum') {
+      const allowed = (field.choices ?? []).map((c) => c.value)
+      if (allowed.length && !allowed.includes(part))
+        return { ok: [], error: `허용되지 않은 값입니다: ${part} (${allowed.join(', ')})` }
+      ok.push(part)
+    } else {
+      ok.push(part)
+    }
+  }
+  if (new Set(ok.map(String)).size !== ok.length)
+    return { ok: [], error: '같은 값을 두 번 넣을 수 없습니다.' }
+  if (ok.length > SWEEP_MAX)
+    return { ok: [], error: `한 번에 ${SWEEP_MAX}개까지만 훑을 수 있습니다.` }
+  return { ok, error: '' }
+}
+
+/**
+ * 값마다 예상 시간을 받아 온다. useGoalTimes 와 같은 구조다 - 값이 바뀔 때만 돌게
+ * 서명을 만들고 300ms 미룬다.
+ */
+function useSweepTimes(
+  dataset: Dataset | undefined,
+  devices: number[],
+  values: Record<string, unknown>,
+  schema: ParamSchema | null,
+  axis: ParamField | undefined,
+  sweepValues: unknown[],
+): (number | null)[] {
+  const [times, setTimes] = useState<(number | null)[]>([])
+
+  const signature = JSON.stringify([
+    dataset?.id,
+    devices,
+    axis?.key,
+    sweepValues,
+    // 축이 덮지 않으면서 estimate 에 영향을 주는 값들. useGoalTimes 와 같은 목록이다.
+    values['model'],
+    values['imgsz'],
+    values['epochs'],
+    values['batch'],
+    values['amp'],
+    values['patience'],
+    values['mixup'],
+    values['cache'],
+    values['close_mosaic'],
+    values['time'],
+  ])
+
+  useEffect(() => {
+    if (!dataset || !schema || !axis || sweepValues.length === 0) {
+      setTimes([])
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(() => {
+      Promise.all(
+        sweepValues.map((v) => {
+          const merged = { ...values, [axis.key]: v }
+          const params: Record<string, unknown> = {}
+          for (const f of schema.fields) {
+            if (f.scope !== 'options') params[f.key] = merged[f.key]
+          }
+          return api
+            .estimate(dataset.id, params, devices)
+            .then((e: Estimate) => (e.ok ? e.total_time_s : null))
+            .catch(() => null)
+        }),
+      ).then((results) => {
+        if (!cancelled) setTimes(results)
+      })
+    }, 300)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature])
+
+  return times
 }
 
 /**
@@ -760,6 +1024,9 @@ function useGoalTimes(
     values['mixup'],
     values['cache'],
     values['close_mosaic'],
+    // 시간 예산은 카드가 덮지 않는데 estimate 결과를 통째로 바꾼다. 빼면 예산을 바꿔도
+    // 카드의 예상 시간이 이전 값으로 남는다 - 위 amp 와 같은 함정이다.
+    values['time'],
   ])
 
   useEffect(() => {

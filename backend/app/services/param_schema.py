@@ -32,6 +32,12 @@ _SPEC: list[tuple[Any, ...]] = [
      "가중치(.pt) 또는 모델 정의(.yaml) 경로. 이전 학습의 best.pt 를 넣으면 이어서 학습한다."),
     ("epochs", "에폭 수", "int", "기본", False, 1, 10000, 1, None,
      "전체 데이터셋을 몇 번 반복할지."),
+    ("time", "시간 예산(시간)", "float", "기본", False, 0.0, 24.0, 0.25, None,
+     "0이면 끕니다. 켜면 에폭 수를 무시하고 이 시간만큼만 학습하며, 에폭 수는 예산에 맞춰 "
+     "자동으로 다시 계산됩니다. 정확한 상한은 아닙니다 — 마지막 에폭의 검증과 마무리가 "
+     "더 걸리므로 실제 소요는 예산을 조금 넘습니다. 조기 종료(patience)가 먼저 걸리면 "
+     "그보다 일찍 끝납니다. 모자이크 종료 에폭(close_mosaic)과 함께 쓰면 에폭 수가 계속 "
+     "바뀌는 탓에 그 시점이 걸리지 않을 수 있습니다."),
     ("imgsz", "이미지 크기", "int", "기본", False, 32, 4096, 32, None,
      "학습 입력 해상도(정사각형). 32의 배수여야 한다. 크면 작은 객체에 유리하지만 VRAM을 많이 쓴다."),
     ("batch", "배치 크기", "int", "기본", False, -1, 1024, 1, None,
@@ -144,6 +150,10 @@ def build_schema() -> dict[str, Any]:
             default = default_model()
         elif key == "cache":
             default = "False" if not default else str(default)
+        elif key == "time":
+            # ultralytics 기본값이 None 이다. 그대로 두면 폼이 null 을 렌더하고
+            # 사용자가 손대지 않은 값이 그대로 돌아와 숫자 입력이 비어 보인다.
+            default = 0.0 if default is None else float(default)
 
         # 기본값 보정과 별개로 돌아야 한다. elif 로 묶여 있던 동안 cache 만 choices 가
         # 원시 문자열 리스트로 남았고, _coerce 의 c["value"] 가 문자열을 인덱싱해

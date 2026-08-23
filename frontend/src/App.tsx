@@ -177,6 +177,16 @@ export default function App() {
                 runs.reload()
                 setView({ kind: 'run', id })
               }}
+              /*
+               * 스윕은 만든 직후 비교 화면으로 보낸다. 하나씩 열어 볼 이유가 없고,
+               * 이 선택은 새로고침하면 사라지므로 지금 넣어 주는 것이 가장 확실하다.
+               * 스윕 상한(SWEEP_MAX)이 COMPARE_LIMIT 과 같아 항상 통째로 들어간다.
+               */
+              onSweepStarted={(ids) => {
+                runs.reload()
+                setCompare(ids.slice(0, COMPARE_LIMIT))
+                setView({ kind: 'compare' })
+              }}
             />
           )}
 

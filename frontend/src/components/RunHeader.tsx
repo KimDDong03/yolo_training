@@ -48,13 +48,42 @@ export function RunHeader({ run, dataset, stream, onStop }: Props) {
   const progress = useMemo(() => {
     const start = stream.events.find((e) => e.t === 'start')
     const last = [...stream.events].reverse().find((e) => e.t === 'epoch')
+    const end = [...stream.events].reverse().find((e) => e.t === 'end')
     const total = last?.total_epochs ?? start?.total_epochs ?? 0
     const done = last?.epoch ?? 0
     const batch = stream.batch
     const withinEpoch = batch?.n ? (batch.i ?? 0) / batch.n : 0
+
+    /*
+     * 시간 예산이 걸린 실행은 에폭 수가 실행 중에 다시 계산된다(trainer.py:546).
+     * 그 분모로 바를 그리면 예산 진행률이 아니라 48 -> 47 로 흔들리는 값이 된다.
+     * 예산이 켜져 있으면 분모를 시간으로 바꾼다.
+     *
+     * 경과는 start 이벤트 시각부터 잰다. 그 시각은 ultralytics 가 재는 학습 시작보다
+     * 조금 이르다 - 프로세스 기동과 데이터 스캔이 앞에 들어간다. 그만큼 바가 살짝
+     * 앞서지만, 없는 정확도를 지어내느니 이 근사를 쓰고 밝혀 둔다.
+     */
+    const budget = Number(run.params?.time ?? 0) * 3600
+    if (budget > 0) {
+      const elapsed =
+        typeof end?.elapsed_s === 'number'
+          ? end.elapsed_s
+          : typeof start?.ts === 'number'
+            ? Date.now() / 1000 - start.ts
+            : 0
+      return {
+        total,
+        done,
+        budget,
+        elapsed,
+        fraction: Math.min(Math.max(elapsed, 0) / budget, 1),
+        eta: Math.max(budget - elapsed, 0),
+      }
+    }
+
     const fraction = total ? Math.min((done + withinEpoch) / total, 1) : 0
-    return { total, done, fraction, eta: last?.eta_s ?? null }
-  }, [stream.events, stream.batch])
+    return { total, done, budget: 0, elapsed: 0, fraction, eta: last?.eta_s ?? null }
+  }, [stream.events, stream.batch, run.params])
 
   const kpi = useMemo(() => {
     const epochs = stream.events.filter((e) => e.t === 'epoch')
@@ -125,8 +154,18 @@ export function RunHeader({ run, dataset, stream, onStop }: Props) {
       <div className="run-progress">
         <div className="track">
           <div className="row" style={{ alignItems: 'baseline' }}>
-            <span className="epoch-now">{progress.total ? progress.done : '-'}</span>
-            <span className="epoch-total">/ {progress.total || '-'} 에폭</span>
+            {progress.budget > 0 ? (
+              <>
+                <span className="epoch-now">{clock(progress.elapsed)}</span>
+                <span className="epoch-total">/ {clock(progress.budget)} 예산</span>
+                <span className="small muted nowrap">{progress.done || '-'}에폭째</span>
+              </>
+            ) : (
+              <>
+                <span className="epoch-now">{progress.total ? progress.done : '-'}</span>
+                <span className="epoch-total">/ {progress.total || '-'} 에폭</span>
+              </>
+            )}
             {progress.eta != null && running && (
               <span className="small muted nowrap spacer">
                 남은 시간 <span className="mono">{clock(progress.eta)}</span> · 종료 예정{' '}
@@ -142,7 +181,11 @@ export function RunHeader({ run, dataset, stream, onStop }: Props) {
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
-            aria-valuetext={`${progress.done}/${progress.total} 에폭, ${percent}%`}
+            aria-valuetext={
+              progress.budget > 0
+                ? `시간 예산 ${clock(progress.budget)} 중 ${clock(progress.elapsed)} 경과, ${percent}%`
+                : `${progress.done}/${progress.total} 에폭, ${percent}%`
+            }
           >
             <div style={{ width: `${percent}%` }} />
           </div>

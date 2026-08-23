@@ -45,6 +45,9 @@ export function useAdvice(
     values['mixup'],
     values['cache'],
     values['close_mosaic'],
+    // 시간 예산은 추정 결과를 통째로 바꾼다(estimate.py 가 예산으로 상한을 씌운다).
+    // 빼면 예산을 켜도 하단 요약이 예산 없는 시간을 그대로 보여준다.
+    values['time'],
   ])
 
   useEffect(() => {

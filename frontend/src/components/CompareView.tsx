@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts'
 import { api } from '../api'
+import { formatShort } from '../format'
 import { chartAxis, chartGrid, chartLegend, chartTooltip, seriesColor } from '../theme'
 import type { Run, TrainEvent } from '../types'
 import { EmptyState, SkeletonRows } from './ui/EmptyState'
@@ -19,6 +20,8 @@ const METRICS = ['mAP50-95', 'mAP50', 'precision', 'recall'] as const
 interface Loaded {
   run: Run
   epochs: TrainEvent[]
+  /** 마지막 end 이벤트. 소요 시간이 여기에만 있다. 진행 중이거나 못 읽으면 undefined. */
+  end: TrainEvent | undefined
 }
 
 /**
@@ -46,7 +49,14 @@ export function CompareView({ runIds }: { runIds: string[] }) {
     Promise.allSettled(
       runIds.map(async (id) => {
         const [run, events] = await Promise.all([api.run(id), api.events(id)])
-        return { run, epochs: events.events.filter((e) => e.t === 'epoch') }
+        // epoch 과 end 를 갈라서 들고 있는다. 한 배열에 섞으면 end 가 에폭 하나로 세어져
+        // 차트의 X축(epochs.length)과 아래 '총 N에폭'이 같이 틀어진다.
+        const all = events.events
+        return {
+          run,
+          epochs: all.filter((e) => e.t === 'epoch'),
+          end: [...all].reverse().find((e) => e.t === 'end'),
+        }
       }),
     ).then((results) => {
       if (cancelled) return
@@ -83,7 +93,15 @@ export function CompareView({ runIds }: { runIds: string[] }) {
     const rows: { key: string; values: string[] }[] = []
     for (const key of [...keys].sort()) {
       const values = loaded.map((l) => {
-        const v = (l.run.params as Record<string, unknown>)[key] ?? (l.run.options ?? {})[key]
+        // model 은 원본으로 대조한다. params.model 은 run 폴더 안의 복사본 경로라
+        // (run_manager.py:105) 같은 가중치로 시작한 실행끼리도 값이 달라, 그대로 두면
+        // 어떤 두 실행을 비교해도 model 이 늘 '다른 설정' 으로 뜬다.
+        // 파일 이름만 비교하는 것으로는 부족하다 — 서로 다른 실행에서 이어받은
+        // best.pt 두 개는 이름이 같지만 실제로 다른 가중치다.
+        const v =
+          key === 'model' && l.run.source_model != null
+            ? l.run.source_model
+            : ((l.run.params as Record<string, unknown>)[key] ?? (l.run.options ?? {})[key])
         return v === undefined || v === null ? '-' : String(v)
       })
       if (new Set(values).size > 1) rows.push({ key, values })
@@ -103,7 +121,24 @@ export function CompareView({ runIds }: { runIds: string[] }) {
             epoch = i + 1
           }
         })
-        return { id: l.run.id, name: l.run.name, value, epoch }
+        // 성능만 보고 비용을 안 보면 모델 크기를 가로지르는 비교가 성립하지 않는다.
+        // 셋 다 이미 받아온 이벤트에서 나오므로 새 API 를 부르지 않는다.
+        let vram: number | null = null
+        for (const e of l.epochs) {
+          const m = e.mem_gb
+          if (typeof m === 'number' && (vram === null || m > vram)) vram = m
+        }
+        // 워커가 예외로 죽으면 end 에 elapsed_s 가 없다. 0 으로 꾸미지 않고 없다고 말한다.
+        const seconds = typeof l.end?.elapsed_s === 'number' ? l.end.elapsed_s : null
+        return {
+          id: l.run.id,
+          name: l.run.name,
+          value,
+          epoch,
+          seconds,
+          vram,
+          ran: l.epochs.length,
+        }
       }),
     [loaded],
   )
@@ -183,6 +218,13 @@ export function CompareView({ runIds }: { runIds: string[] }) {
                 <span className="best-name">{b.name}</span>
                 <span className="best-value">{b.value < 0 ? '-' : b.value.toFixed(4)}</span>
                 <span className="best-epoch">{b.epoch ? `${b.epoch}에폭` : '-'}</span>
+                <span className="best-cost">
+                  {b.seconds === null ? '시간 미측정' : formatShort(b.seconds)}
+                  {' · '}
+                  {b.vram === null ? 'VRAM 미측정' : `최대 ${b.vram.toFixed(1)}GB`}
+                  {' · '}
+                  {`총 ${b.ran}에폭`}
+                </span>
               </li>
             ))}
           </ul>

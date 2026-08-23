@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import datasets, jobs, presets, runs, system
 from app.core import db
 from app.core.config import FRONTEND_DIST, ensure_dirs
-from app.services import event_stream, run_manager
+from app.services import dataset_prune, event_stream, run_manager
 from app.services import jobs as job_service
 
 
@@ -27,6 +27,8 @@ async def lifespan(app: FastAPI):
     # 살아 있는 사이드잡을 다시 붙잡는다. 이걸 빼면 잡이 물고 있는 GPU 가 비어 보여
     # 스케줄러가 그 위에 학습을 띄운다 → 둘 다 OOM.
     job_service.recover()
+    # 삭제 도중에 죽었으면 "파일은 없는데 목록에는 있는" 상태가 남는다 — 학습이 그걸로 죽는다.
+    dataset_prune.recover()
     task = asyncio.create_task(run_manager.scheduler_loop())
     try:
         yield

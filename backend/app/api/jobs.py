@@ -85,4 +85,8 @@ def job_file(owner_type: str, owner_id: str, kind: str, path: str) -> FileRespon
     target = (root / path).resolve()
     if root not in target.parents or not target.is_file():
         raise HTTPException(404, "파일을 찾을 수 없습니다.")
-    return FileResponse(target)
+    # 같은 URL 의 내용이 바뀐다 — 다시 검사하면 quality.json 이 통째로 새 파일이 된다.
+    # FileResponse 는 Cache-Control 을 붙이지 않아서 브라우저가 Last-Modified 로 유효기간을
+    # 스스로 정하고 재확인 없이 옛 본문을 내준다. 실제로 사진을 지운 뒤 화면이 지워진 사진을
+    # 계속 보여줬다.
+    return FileResponse(target, headers={"Cache-Control": "no-store"})

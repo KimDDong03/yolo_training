@@ -12,7 +12,13 @@ from fastapi.responses import FileResponse
 
 from app.core import db, fsops
 from app.core.config import DATASETS_DIR, IMAGE_SUFFIXES, MAX_ZIP_BYTES, UPLOADS_DIR
-from app.services import dataset_ingest, param_schema, recommend, run_manager
+from app.services import (
+    dataset_ingest,
+    dataset_prune,
+    param_schema,
+    recommend,
+    run_manager,
+)
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
@@ -240,14 +246,74 @@ def dataset_image(dataset_id: str, path: str) -> FileResponse:
             f"등록된 원본 폴더가 없습니다: {dataset['root']}"
             " — 폴더를 옮겼거나 지운 것으로 보입니다. 데이터셋을 다시 등록해야 사진이 열립니다.",
         )
-    # 검수 목록은 root 기준 상대 경로를 주고, 샘플 목록은 절대 경로를 준다 — 둘 다 받는다.
-    raw = Path(path)
-    target = (raw if raw.is_absolute() else root / raw).resolve()
-    if target != root and root not in target.parents:
+    target = dataset_ingest.resolve_in_root(root, path)
+    if target is None:
         raise HTTPException(403, "데이터셋 폴더 밖의 파일은 열 수 없습니다.")
     if not target.is_file() or target.suffix.lower() not in IMAGE_SUFFIXES:
         raise HTTPException(404, "이미지를 찾을 수 없습니다.")
     return FileResponse(target)
+
+
+@router.get("/{dataset_id}/image-info")
+def dataset_image_info(dataset_id: str, path: str) -> dict[str, Any]:
+    """비교 화면이 쓰는 한 장짜리 사실.
+
+    두 장이 거의 같을 때 "어느 쪽을 남길까" 를 정하는 근거는 해상도·용량·정답 박스 수다.
+    눈으로는 갈리지 않는다.
+    """
+    dataset = get_dataset(dataset_id)
+    root = Path(dataset["root"]).resolve()
+    target = dataset_ingest.resolve_in_root(root, path)
+    if target is None:
+        raise HTTPException(403, "데이터셋 폴더 밖의 파일은 열 수 없습니다.")
+    if not target.is_file() or target.suffix.lower() not in IMAGE_SUFFIXES:
+        raise HTTPException(404, "이미지를 찾을 수 없습니다.")
+
+    width: int | None = None
+    height: int | None = None
+    try:
+        from PIL import Image
+
+        with Image.open(target) as image:
+            width, height = image.size
+    except Exception:  # noqa: BLE001 - 크기를 못 읽어도 나머지는 보여준다
+        pass
+
+    label = dataset_ingest._label_for(target)
+    boxes = 0
+    if dataset_ingest.resolve_in_root(root, label) is not None and label.is_file():
+        ids, _, _ = dataset_ingest._parse_label(label)
+        boxes = len(ids)
+
+    return {
+        "path": str(target),
+        "width": width,
+        "height": height,
+        "bytes": target.stat().st_size,
+        "boxes": boxes,
+    }
+
+
+@router.post("/{dataset_id}/images/delete")
+def delete_dataset_images(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """중복·누수로 지목된 사진을 원본까지 지운다. 되돌릴 수 없다.
+
+    "전부 지우기" 같은 편의 인자를 받지 않는다 — 화면이 보여 준 경로만 명시적으로 받아
+    폭발 반경을 사용자가 실제로 본 목록으로 묶는다.
+    """
+    dataset = get_dataset(dataset_id)
+    raw = payload.get("paths")
+    if not isinstance(raw, list) or any(not isinstance(p, str) for p in raw):
+        raise HTTPException(422, "paths 는 경로 문자열의 배열이어야 합니다.")
+
+    try:
+        result = dataset_prune.delete_images(dataset, raw)
+    except dataset_prune.PruneError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except run_manager.RunError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    return {**result, "dataset": get_dataset(dataset_id)}
 
 
 @router.delete("/{dataset_id}")

@@ -45,6 +45,11 @@ button.ghost { background: transparent; border-color: transparent; min-height: 0
  * 그러지 않으면 금색 배경 위에 금색 글자가 된다.
  */
 button[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
+/* 자기 색을 가진 버튼은 예외다. 위 규칙은 특정도가 같고 뒤에 있어서 그냥 두면 이긴다 —
+   .primary 는 금색 배경 위에 금색 글자가 되어 아예 안 보였고(실제로 겪었다),
+   .danger 는 눌리는 순간 빨강을 잃어 '지움' 과 '남길 장' 이 같은 색이 된다. */
+button.primary[aria-pressed='true'] { color: var(--bg); }
+button.danger[aria-pressed='true'] { color: var(--err); border-color: var(--err); }
 
 /* 내려받기 링크. <a> 안에 <button> 을 넣으면 대화형 요소 중첩이라 스크린리더가 헷갈린다. */
 a.button {

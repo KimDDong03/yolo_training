@@ -444,6 +444,22 @@ def path_status(dataset: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def resolve_in_root(root: Path, raw: str | Path) -> Path | None:
+    """root 기준으로 경로를 풀고 root 안쪽일 때만 돌려준다. 밖이면 None.
+
+    목록 파일은 절대 경로를, 검수 목록은 root 기준 상대 경로를 준다 — 둘 다 받는다.
+    root 는 이미 resolve 된 것을 넘겨야 한다.
+
+    이미지 서빙과 삭제가 같은 경계를 써야 한다. 규칙이 두 벌이면 한쪽만 느슨해지는데,
+    삭제 쪽이 느슨해지면 등록하지 않은 폴더의 파일이 사라진다.
+    """
+    candidate = Path(raw)
+    target = (candidate if candidate.is_absolute() else root / candidate).resolve()
+    if target != root and root not in target.parents:
+        return None
+    return target
+
+
 def review_path(dataset_dir: Path) -> Path:
     return dataset_dir / "review.json"
 

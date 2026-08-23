@@ -169,6 +169,12 @@ export interface Run {
   error: string | null
   /** 이 실행이 재시도라면 원본 실행 ID. */
   retry_of: string | null
+  /**
+   * 사용자가 고른 원본 가중치 경로. `params.model` 은 run 폴더 안의 복사본이라
+   * run 마다 다르다 — 모델을 대조할 때는 이걸 쓴다.
+   * `GET /api/runs/{id}` 에만 실린다. 옛 run 이나 config 를 못 읽으면 null.
+   */
+  source_model?: string | null
   created_at: number
   started_at: number | null
   finished_at: number | null
@@ -416,6 +422,24 @@ export interface DuplicateGroup {
   images: { path: string; split: 'train' | 'val' }[]
 }
 
+/** 비교 화면이 쓰는 한 장짜리 사실. 크기를 못 읽으면 width/height 가 null 이다. */
+export interface ImageInfo {
+  path: string
+  width: number | null
+  height: number | null
+  bytes: number
+  boxes: number
+}
+
+export interface DeleteImagesResult {
+  deleted: number
+  /** 파일 잠금이나 폴더 밖 라벨처럼 못 지운 것. 목록에는 그대로 남는다. */
+  failed: { path: string; error: string }[]
+  train_count: number
+  val_count: number
+  dataset: Dataset
+}
+
 export interface LeakPair {
   train: string
   val: string
@@ -618,6 +642,8 @@ export interface TrainEvent {
   lr?: Record<string, number | null>
   epoch_time_s?: number
   eta_s?: number
+  /** t === 'end' 일 때의 총 소요 시간(초). 워커가 예외로 죽은 실패 run 에는 없다. */
+  elapsed_s?: number
   files?: string[]
   i?: number
   n?: number | null

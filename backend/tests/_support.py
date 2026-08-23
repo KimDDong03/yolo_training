@@ -20,7 +20,7 @@ def isolate_storage() -> Path:
     root = Path(tempfile.mkdtemp(prefix="yoloweb_test_"))
 
     from app.core import config, db
-    from app.services import dataset_ingest, jobs, run_manager
+    from app.services import dataset_ingest, dataset_prune, jobs, run_manager
 
     config.DB_PATH = root / "app.db"
     config.RUNS_DIR = root / "runs"
@@ -36,6 +36,7 @@ def isolate_storage() -> Path:
     jobs.DATASETS_DIR = config.DATASETS_DIR
     jobs.OWNER_ROOTS = {"run": config.RUNS_DIR, "dataset": config.DATASETS_DIR}
     dataset_ingest.DATASETS_DIR = config.DATASETS_DIR
+    dataset_prune.DATASETS_DIR = config.DATASETS_DIR
 
     config.RUNS_DIR.mkdir(parents=True, exist_ok=True)
     config.DATASETS_DIR.mkdir(parents=True, exist_ok=True)

@@ -3,10 +3,12 @@ import type {
   Artifacts,
   Dataset,
   DatasetReview,
+  DeleteImagesResult,
   Diagnosis,
   Estimate,
   ExportStatus,
   Gpu,
+  ImageInfo,
   JobStatus,
   ModelCheck,
   ParamSchema,
@@ -79,6 +81,16 @@ export const api = {
       `/api/datasets/${id}/samples`,
     ),
   datasetImageUrl: (id: string, path: string) => `/api/datasets/${id}/image?path=${encodeURIComponent(path)}`,
+  /** 비교 화면 전용. 해상도·용량·정답 박스 수 — 어느 쪽을 남길지 정하는 근거다. */
+  datasetImageInfo: (id: string, path: string) =>
+    req<ImageInfo>(`/api/datasets/${id}/image-info?path=${encodeURIComponent(path)}`),
+  /** 원본 파일까지 지운다. 되돌릴 수 없다. */
+  deleteDatasetImages: (id: string, paths: string[]) =>
+    req<DeleteImagesResult>(`/api/datasets/${id}/images/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths }),
+    }),
   startQuality: (id: string, body: { imgsz: number; use_gpu: boolean }) =>
     req<JobStatus>(`/api/jobs/dataset/${id}/quality`, {
       method: 'POST',
@@ -125,6 +137,21 @@ export const api = {
     retry_of?: string
   }) =>
     req<Run>('/api/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  /** 한 축을 여러 값으로 훑는다. 값 전체가 검증을 통과해야 하나라도 만들어진다. */
+  createSweep: (body: {
+    dataset_id: string
+    name: string
+    devices: number[]
+    params: Record<string, unknown>
+    options: Record<string, unknown>
+    axis: string
+    values: unknown[]
+  }) =>
+    req<{ runs: Run[]; axis: string; label: string }>('/api/runs/sweep', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

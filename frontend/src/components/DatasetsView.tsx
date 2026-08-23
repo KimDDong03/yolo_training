@@ -113,7 +113,8 @@ export function DatasetsView({ datasets, status, onChanged }: Props) {
                 {open && (
                   <div style={{ marginTop: 'var(--sp-4)' }}>
                     <DatasetReviewPanel dataset={d} />
-                    <QualityPanel dataset={d} />
+                    {/* 사진을 지우면 장수와 검수 경고가 바뀐다 — 목록도 다시 읽어야 한다. */}
+                    <QualityPanel dataset={d} onDatasetChanged={onChanged} />
                   </div>
                 )}
               </div>
